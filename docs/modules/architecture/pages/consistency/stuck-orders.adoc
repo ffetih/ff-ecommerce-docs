@@ -1,0 +1,38 @@
+= Orders that stop moving
+:description: An event the next step needs ends in a dead-letter topic, and the order waits forever.
+
+// Story to write in your own words. Keep the four sections; delete the NOTE block when done.
+
+== The scenario
+
+An event the next step needs ends in a dead-letter topic, and the order waits forever.
+
+== What would go wrong
+
+// Without the fix: which services disagree, and what does a customer or the warehouse see?
+
+== The fix
+
+// What the system does now, and why this service is the one that decides.
+
+== How it is proven
+
+* `OrderExpiryIT` (both timeouts, untouched states, two scanners at once)
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
+
+== When it happens in production
+
+See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts].
+
+Decision record: xref:adr/0007-order-saga.adoc[ADR-0007].
+
+[NOTE]
+.Facts to build on (remove when the story is written)
+====
+* A PLACED order whose stock-reserved never arrives keeps its reservation; a CONFIRMED order nobody dispatches holds stock indefinitely.
+* Fix: order expiry in order-service. PLACED for 30 minutes is cancelled ("Not confirmed in time"); CONFIRMED for 3 days is asked to cancel ("Not dispatched in time") through the same gate a customer uses, so expiry can never overtake a dispatch.
+* CANCELLATION_REQUESTED has no timer: it waits for shipping's answer.
+* Each order expires in its own transaction, locked with FOR UPDATE SKIP LOCKED, so several instances can scan at once.
+* Trade-off: expiry hides the cause, so it is only safe together with the dead-letter metric.
+====

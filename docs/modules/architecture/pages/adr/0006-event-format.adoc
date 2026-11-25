@@ -1,0 +1,47 @@
+= ADR-0006: Event format and contracts
+
+* *Status:* Accepted
+* *Date:* 2026-11-25
+
+== Context
+
+Events are read by services that are deployed independently. The previous version serialized Java
+records and put Java class names in Kafka headers, so a consumer needed the producer's classes on its
+classpath and a package rename broke every consumer.
+
+== Decision
+
+Every event is a JSON document with a small envelope:
+
+[source,json]
+----
+{
+  "eventId": "8f0c…",
+  "eventType": "catalog.stock-changed",
+  "eventVersion": 1,
+  "occurredAt": "2026-11-25T10:00:00Z",
+  "source": "catalog-service",
+  "data": { "sku": "KB-MECH-01", "onHand": 10, "reserved": 3, "available": 7 }
+}
+----
+
+* `eventType` is a stable, language-neutral name: `<producing context>.<past-tense fact>`.
+* `eventVersion` changes only on breaking changes to `data`. Adding an optional field is not breaking;
+consumers ignore fields they do not know.
+* The Kafka record key is the aggregate id (for example the SKU), which keeps one aggregate's events
+in one partition and therefore in order.
+* `event-id` and `event-type` are also copied into Kafka headers for routing and tracing, never class names.
+* Java records describing `data` live in a small `events` module for convenience. They are a
+description of the JSON, not the contract itself; consumers may read the JSON without them.
+
+== Consequences
+
+* Events are readable in Kafka UI and by non-Java consumers.
+* Compatibility is a matter of discipline and review, not enforced by a registry.
+
+== Alternatives considered
+
+* *Avro or JSON Schema with a schema registry:* enforces compatibility automatically and is the better
+choice with many teams; adds a registry to run. Can be introduced later without changing topics' keys.
+* *CloudEvents:* the envelope above follows the same idea; adopting the full specification adds
+little at this size.

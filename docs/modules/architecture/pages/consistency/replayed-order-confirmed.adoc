@@ -1,0 +1,35 @@
+= A replayed order-confirmed
+:description: An order's confirmation was dead-lettered, shipping accepted its cancellation without a shipment, and later someone replays the dead letter.
+
+// Story to write in your own words. Keep the four sections; delete the NOTE block when done.
+
+== The scenario
+
+An order's confirmation was dead-lettered, shipping accepted its cancellation without a shipment, and later someone replays the dead letter.
+
+== What would go wrong
+
+// Without the fix: which services disagree, and what does a customer or the warehouse see?
+
+== The fix
+
+// What the system does now, and why this service is the one that decides.
+
+== How it is proven
+
+* `ShippingSagaIT`
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
+
+== When it happens in production
+
+See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts].
+
+Decision record: xref:adr/0007-order-saga.adoc[ADR-0007].
+
+[NOTE]
+.Facts to build on (remove when the story is written)
+====
+* Without a guard, the replay creates a shipment for an order whose stock is already released.
+* Fix: when shipping accepts a cancellation without a shipment, it records the order in cancelled_orders; a later order-confirmed for it creates nothing and logs a warning.
+====

@@ -1,0 +1,74 @@
+= Runbook: dead letters
+:description: A message a service could not process: find it, understand it, fix the cause, replay it safely.
+
+A record that keeps failing is retried in place (0.5 s, 1 s, 2 s), then moved to `<topic>-dlt` so the
+partition can move on. Unreadable records go there at once. Dead-letter topics keep records for
+30 days.
+
+== 1. Notice
+
+`messaging.dead.letters` increased (xref:metrics.adoc[metrics]). Its tags say which topic and which
+exception. The service log has a line for each failed attempt.
+
+== 2. Inspect
+
+Open the dead-letter topic in Kafka UI (http://localhost:8090). The record is the original value, with
+the original key (the order id) and these headers:
+
+[cols="1,2"]
+|===
+|Header |Meaning
+
+|`kafka_dlt-original-topic`, `-partition`, `-offset` |where the record came from
+|`kafka_dlt-exception-fqcn`, `-exception-cause-fqcn` |what stopped it
+|`kafka_dlt-exception-message` |the reason, in words
+|`event-id`, `event-type` |the event inside the envelope
+|===
+
+== 3. Decide
+
+[cols="1,2"]
+|===
+|Exception |Usually means, and what to do
+
+|`MalformedEventException`
+|The producer sent something unreadable. Replaying gives the same result: fix the producer; the record
+itself is evidence, not work to redo.
+
+|`IllegalOrderTransitionException` and similar
+|An earlier event of the same order is missing, typically dead-lettered itself (a delivery without its
+dispatch). Find the earlier dead letter with the same key and replay both, *earliest first*.
+
+|A database or network error
+|The service was down for longer than the retries. Fix the cause, then replay.
+|===
+
+Before replaying, look at the order: xref:architecture:consistency/stuck-orders.adoc[order expiry]
+may already have cancelled it, or asked shipping to.
+
+== 4. Replay
+
+Send the original value with the original key back to the original topic, in the original order per
+key:
+
+[source,bash]
+----
+# one record: "<order id>|<value exactly as in the dead-letter topic>"
+docker compose exec -it kafka /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 --topic order.lifecycle \
+  --property parse.key=true --property key.separator='|'
+----
+
+Replaying is safe, because:
+
+* the event id travels inside the value, so a consumer that has already processed it skips it
+  (the inbox remembers ids for 30 days, longer than any topic keeps events);
+* catalog never reserves stock again for an order whose reservation was released
+  (xref:architecture:consistency/replayed-order-placed.adoc[story]);
+* shipping never creates a shipment for an order whose cancellation it already accepted
+  (xref:architecture:consistency/replayed-order-confirmed.adoc[story]).
+
+== 5. Confirm
+
+The counter stays flat, the order reaches a final state, and catalog's stock for its SKUs matches
+(`+GET /api/v1/stock/{sku}+`).

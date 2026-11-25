@@ -1,0 +1,36 @@
+= Security model
+:description: Where tokens come from, who checks them, and what each caller may do.
+
+Keycloak issues the tokens; every service checks them itself
+(xref:adr/0008-security.adoc[ADR-0008]).
+
+[cols="1,3"]
+|===
+|Concern |Rule
+
+|Token validation
+|Signature (keys from the issuer), issuer, expiry, and an audience naming the service. A service
+without issuer or audience refuses to start.
+
+|Deny by default
+|Each service lists its endpoints with the roles allowed; everything else is denied. A service whose
+filter chains were not built by the shared `security` module refuses to start.
+
+|Identity
+|The customer id is the token's `sub`. No request names a customer; someone else's order answers
+`404`, like an unknown id.
+
+|Service to service
+|order-service calls customer and catalog with its own client-credentials token, cached, with
+timeouts, renewed once when rejected.
+
+|Gateway
+|Routes only. A request that bypasses it meets the same checks.
+
+|Operations
+|Health is open for probes; `/actuator/metrics` needs the `admin` role.
+|===
+
+Roles: `customer` (own profile and orders), `admin` (back office: catalog, stock, shipments, any
+order), `service` (machine tokens). Realm and clients are described in
+xref:operations:keycloak.adoc[Keycloak realm and clients].

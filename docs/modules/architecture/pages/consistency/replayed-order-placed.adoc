@@ -1,0 +1,37 @@
+= A replayed order-placed
+:description: `order-placed` arrives again after the order was cancelled and its reservation released, and the inbox no longer recognises it.
+
+// Story to write in your own words. Keep the four sections; delete the NOTE block when done.
+
+== The scenario
+
+`order-placed` arrives again after the order was cancelled and its reservation released, and the inbox no longer recognises it.
+
+== What would go wrong
+
+// Without the fix: which services disagree, and what does a customer or the warehouse see?
+
+== The fix
+
+// What the system does now, and why this service is the one that decides.
+
+== How it is proven
+
+* `SagaParticipationIT`
+* `ReservationLifecycleIT`
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
+
+== When it happens in production
+
+See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts].
+
+Decision record: xref:adr/0007-order-saga.adoc[ADR-0007].
+
+[NOTE]
+.Facts to build on (remove when the story is written)
+====
+* Catalog found an existing reservation with the same lines and answered stock-reserved, for stock nobody held.
+* The saga survived it (order-service repeated the cancellation), but catalog stated something false.
+* Fix: a RELEASED reservation is refused; over Kafka the answer is stock-reservation-failed, which a cancelled order ignores; over HTTP it is 409.
+====

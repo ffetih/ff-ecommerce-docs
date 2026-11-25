@@ -1,0 +1,36 @@
+= A delivery without a dispatch
+:description: `shipment-delivered` reaches order-service for an order that never became SHIPPED.
+
+// Story to write in your own words. Keep the four sections; delete the NOTE block when done.
+
+== The scenario
+
+`shipment-delivered` reaches order-service for an order that never became SHIPPED.
+
+== What would go wrong
+
+// Without the fix: which services disagree, and what does a customer or the warehouse see?
+
+== The fix
+
+// What the system does now, and why this service is the one that decides.
+
+== How it is proven
+
+* `SagaReactionsIT` (order-service)
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
+
+== When it happens in production
+
+See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts].
+
+Decision record: xref:adr/0007-order-saga.adoc[ADR-0007].
+
+[NOTE]
+.Facts to build on (remove when the story is written)
+====
+* The dispatch event can only be missing because it was dead-lettered itself.
+* Accepting the delivery would show a delivered order whose stock was never committed in catalog.
+* Fix: delivery is only accepted from SHIPPED; otherwise the event is refused and goes to the dead-letter topic next to the dispatch it depends on, where both can be replayed in order.
+====

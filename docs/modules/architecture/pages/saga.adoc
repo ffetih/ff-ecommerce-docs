@@ -1,0 +1,86 @@
+= The order saga
+:description: How order, catalog and shipping move one order from placement to delivery without a shared transaction.
+
+An order touches three services with their own databases. Instead of one transaction, each service
+does its part in a local transaction and announces it with an event; the others react
+(xref:adr/0007-order-saga.adoc[ADR-0007]).
+
+== Order states
+
+[plantuml,order-states,svg]
+----
+@startuml
+hide empty description
+skinparam shadowing false
+skinparam defaultFontName sans-serif
+
+[*] --> PLACED : customer places order
+PLACED --> CONFIRMED : stock-reserved
+PLACED --> CANCELLED : reservation-failed,\ncustomer cancels,\nnot confirmed in 30 min
+CONFIRMED --> SHIPPED : shipment-dispatched
+CONFIRMED --> CANCELLATION_REQUESTED : customer cancels,\nnot dispatched in 3 days
+CANCELLATION_REQUESTED --> CANCELLED : shipment-cancelled
+CANCELLATION_REQUESTED --> SHIPPED : shipment-dispatched\n(dispatch came first)
+SHIPPED --> DELIVERED : shipment-delivered
+CANCELLED --> [*]
+DELIVERED --> [*]
+@enduml
+----
+
+The order only moves forward. A step it has already passed is ignored, so a late or repeated event
+changes nothing.
+
+== Who reacts to what
+
+[plantuml,saga-sequence,svg]
+----
+@startuml
+skinparam shadowing false
+skinparam defaultFontName sans-serif
+participant "order-service" as O
+queue "order.lifecycle" as OL
+participant "catalog-service" as C
+queue "catalog.reservations" as CR
+participant "shipping-service" as S
+queue "shipping.shipments" as SS
+
+O -> OL : order-placed
+OL -> C : reserve stock
+C -> CR : stock-reserved
+CR -> O : CONFIRMED
+O -> OL : order-confirmed
+OL -> S : create shipment
+== warehouse hands the parcel over ==
+S -> SS : shipment-dispatched
+SS -> C : commit stock
+SS -> O : SHIPPED
+S -> SS : shipment-delivered
+SS -> O : DELIVERED
+@enduml
+----
+
+All topics are keyed by order id, so the events of one order arrive in order within each topic.
+
+== Cancelling
+
+[cols="1,3"]
+|===
+|Order is |What happens
+
+|PLACED
+|order-service cancels on its own (`200`) and announces `order-cancelled`; catalog releases whatever it
+reserved. No shipment exists yet.
+
+|CONFIRMED
+|order-service *asks* (`202`, CANCELLATION_REQUESTED) and announces `cancellation-requested`.
+Shipping decides, because only shipping knows whether the parcel has left: before dispatch it cancels
+the shipment and answers `shipment-cancelled`, and only then does the order become CANCELLED and the
+stock released; after dispatch it answers `cancellation-refused` and the order stays SHIPPED.
+
+|SHIPPED or later
+|`409`. Afterwards it can only become a return (s09).
+|===
+
+The full list of situations and their compensation is in
+xref:adr/0007-order-saga.adoc[ADR-0007]; the reasoning behind each rule is in the
+xref:consistency/index.adoc[failure stories].

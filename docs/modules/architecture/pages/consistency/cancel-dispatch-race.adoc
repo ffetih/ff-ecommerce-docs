@@ -1,0 +1,39 @@
+= A cancellation racing a dispatch
+:description: The customer cancels a confirmed order at the moment the warehouse hands the parcel to the carrier.
+
+// Story to write in your own words. Keep the four sections; delete the NOTE block when done.
+
+== The scenario
+
+The customer cancels a confirmed order at the moment the warehouse hands the parcel to the carrier.
+
+== What would go wrong
+
+// Without the fix: which services disagree, and what does a customer or the warehouse see?
+
+== The fix
+
+// What the system does now, and why this service is the one that decides.
+
+== How it is proven
+
+* `CancellationRaceIT` (shipping, 20 rounds)
+* `CancellationRaceE2EIT` (whole system, 8 rounds, dead-letter topics stay empty)
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
+
+== When it happens in production
+
+See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts].
+
+Decision record: xref:adr/0007-order-saga.adoc[ADR-0007].
+
+[NOTE]
+.Facts to build on (remove when the story is written)
+====
+* Before s06, order-service cancelled on its own and told the others.
+* If the dispatch happened in the same moment: the order was CANCELLED, catalog released the stock, the parcel left anyway, and the dispatch event ended in a dead-letter topic.
+* Fix: a confirmed order only asks (CANCELLATION_REQUESTED); shipping, which owns the point of no return, answers shipment-cancelled or cancellation-refused.
+* Inside shipping, dispatch and cancellation of one shipment are serialised by its version (optimistic locking); the loser is retried and sees the winner's outcome.
+* Every interleaving ends cancelled with stock released, or shipped with stock committed.
+====

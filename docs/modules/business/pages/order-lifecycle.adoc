@@ -1,0 +1,62 @@
+= Order lifecycle
+:description: The states of an order, what moves it, and what the customer sees.
+
+[plantuml,order-lifecycle-business,svg]
+----
+@startuml
+hide empty description
+skinparam shadowing false
+skinparam defaultFontName sans-serif
+state "Placed" as PLACED
+state "Confirmed" as CONFIRMED
+state "Cancellation requested" as REQ
+state "Shipped" as SHIPPED
+state "Delivered" as DELIVERED
+state "Cancelled" as CANCELLED
+
+[*] --> PLACED
+PLACED --> CONFIRMED : stock reserved
+PLACED --> CANCELLED : no stock / customer cancels /\nnot confirmed in 30 min
+CONFIRMED --> REQ : customer cancels /\nnot dispatched in 3 days
+REQ --> CANCELLED : parcel stopped
+REQ --> SHIPPED : parcel had already left
+CONFIRMED --> SHIPPED : handed to carrier
+SHIPPED --> DELIVERED : delivery confirmed
+@enduml
+----
+
+[cols="1,3,2"]
+|===
+|State |Meaning |Customer can cancel?
+
+|Placed
+|The order is stored with the prices of that moment; stock is being reserved.
+|Yes, immediately.
+
+|Confirmed
+|Stock is reserved; a parcel is being prepared.
+|Yes, as a request: the answer follows shortly.
+
+|Cancellation requested
+|The warehouse is checking whether the parcel can still be stopped.
+|Already requested.
+
+|Shipped
+|The parcel is with the carrier; the stock has left the warehouse.
+|No. Later: a return.
+
+|Delivered
+|The customer has the goods.
+|No. Later: a return.
+
+|Cancelled
+|Final. Any reserved stock is available again.
+|—
+|===
+
+== Why cancelling a confirmed order is a request
+
+Once a parcel is prepared, only the warehouse knows whether it has left. If the shop cancelled on its
+own, an order could be cancelled and refunded while the parcel is on its way. So the shop asks, and
+the warehouse answers: stopped, or already gone. Either answer leaves stock, order and parcel
+in agreement.

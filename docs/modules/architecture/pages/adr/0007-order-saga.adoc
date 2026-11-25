@@ -1,0 +1,111 @@
+= ADR-0007: Order fulfilment as a choreographed saga
+
+* *Status:* Accepted
+* *Date:* 2026-11-25
+
+== Context
+
+Fulfilling an order touches three services with their own databases: order (status), catalog (stock)
+and shipping (parcel). There is no transaction across them. Each step can fail independently, and
+messages can be delivered twice or late.
+
+== Decision
+
+The order lifecycle is a *choreographed saga*: each service reacts to events and publishes its own,
+using the outbox (xref:adr/0005-transactional-outbox-and-inbox.adoc[ADR-0005]) and the inbox for idempotency.
+
+....
+order-service        catalog-service              shipping-service
+─────────────        ───────────────              ────────────────
+order-placed ──────► reserve stock
+                     ├─ stock-reserved ─────┐
+                     └─ reservation-failed ─┤
+CONFIRMED ◄──────────────────── reserved ───┘
+CANCELLED ◄──────────────── failed
+order-confirmed ─────────────────────────────────► create shipment
+                                                    dispatch ──► shipment-dispatched
+                     commit reservation ◄────────────────────────┤
+SHIPPED   ◄──────────────────────────────────────────────────────┘
+                                                    deliver ───► shipment-delivered
+DELIVERED ◄──────────────────────────────────────────────────────┘
+
+customer cancels a PLACED order (no shipment yet): order decides alone
+CANCELLED, order-cancelled ───► release reservation (if any)
+
+customer cancels a CONFIRMED order: shipping decides
+CANCELLATION_REQUESTED, cancellation-requested ──────────► shipment not dispatched?
+                                                    ├─ yes: cancel it ──► shipment-cancelled
+CANCELLED, order-cancelled ◄──────────────────────────────────────────────┘
+          └──► release reservation                  └─ no:  ──► cancellation-refused
+SHIPPED (dispatch came first) ◄───────────────────────────────────────────┘
+....
+
+Topics and keys: `order.lifecycle`, `catalog.reservations`, `shipping.shipments`, all keyed by order id,
+so the events of one order are consumed in order within each topic.
+
+*Compensation rules*
+
+[cols=",",options="header",]
+|===
+|Situation |Compensation
+|Stock cannot be reserved |Catalog publishes `reservation-failed`; order is cancelled. Nothing was held.
+|Customer cancels a placed order |`order-cancelled`; catalog releases whatever it reserved. No shipment exists yet.
+|Customer cancels a confirmed order |`cancellation-requested`. Shipping cancels the shipment if it has not left and answers `shipment-cancelled`; only then does the order become CANCELLED and announce `order-cancelled`, so catalog releases.
+|`stock-reserved` arrives for an order that was cancelled meanwhile |Order publishes `order-cancelled` again so catalog releases the late reservation.
+|Shipment already dispatched |Shipping answers `cancellation-refused`. The dispatch precedes the refusal on the topic, so the order is already SHIPPED and stays so. Afterwards it can only become a return (s09).
+|`order-confirmed` arrives after shipping accepted the order's cancellation without a shipment (a dead letter replayed late) |Shipping remembers such orders (`cancelled_orders`) and creates no shipment: the stock is already released.
+|`order-placed` arrives again after the reservation was released |Catalog answers `reservation-failed` instead of claiming the stock again; the cancelled order ignores it.
+|`shipment-delivered` arrives for an order that was never shipped |Refused, so it goes to the dead-letter topic next to the dispatch it depends on (which can only be missing because it was dead-lettered itself). Accepting it would show a delivered order whose stock was never committed.
+|A placed order is not confirmed within 30 minutes |Order expiry cancels it ("Not confirmed in time") and announces `order-cancelled`, so catalog releases whatever it reserved.
+|A confirmed order is not dispatched within 3 days |Order expiry requests its cancellation ("Not dispatched in time"); from there it is the customer-cancel path above, so shipping still decides.
+|===
+
+*Business failures are results, not exceptions.* A participant that fails a step for a business
+reason (insufficient stock) records the failure event in the _same_ transaction as its inbox entry and
+commits. Exceptions are reserved for technical failures, which roll everything back and are retried or
+dead-lettered. This is the rule that would have prevented the previous version's lost compensation
+(xref:adr/0004-explicit-transaction-boundaries.adoc[ADR-0004]).
+
+*Cancellation of a confirmed order is a request; shipping decides.* Dispatch is the saga's point of
+no return, and shipping owns it. Until s06 order-service cancelled on its own and informed the others:
+if the warehouse dispatched at the same moment, the order was cancelled and its stock released while
+the parcel was on its way, and the dispatch event ended in a dead-letter topic. Now a confirmed order
+asks (CANCELLATION_REQUESTED), and the party that knows whether the parcel has left answers.
+
+Inside shipping, a dispatch and a cancellation request for the same shipment are settled by the
+shipment's version (optimistic locking): one transaction commits, the other fails and is repeated (the
+HTTP dispatch as a 409 to the warehouse, the request by the Kafka error handler), and then sees the
+first one's outcome. Every interleaving ends in one of two consistent states, cancelled with the stock
+released or shipped with the stock committed; `CancellationRaceIT` and `CancellationRaceE2EIT` repeat
+the race to show it. The cost is one more round trip and a state the customer can see: cancelling a
+confirmed order answers 202, and the outcome follows.
+
+*Orders that stop moving expire.* An event that ends in a dead-letter topic halts its order: a
+placed order whose `stock-reserved` never arrives keeps its reservation, and a confirmed order nobody
+dispatches holds stock forever. Order-service therefore scans for orders that have stayed PLACED or
+CONFIRMED too long (`ecommerce.orders.expiry`, 30 minutes and 3 days by default, measured from the
+order's last change) and stops them through the same gate a customer uses: a placed order is cancelled,
+a confirmed one is asked to cancel, so expiry can never overtake a dispatch. CANCELLATION_REQUESTED has
+no timer; it waits for shipping's answer. Each order is expired in its own transaction and locked with
+`FOR UPDATE SKIP LOCKED`, so several instances can scan at once without expiring an order twice
+(`OrderExpiryIT`).
+
+Expiry hides the cause. An order cancelled "Not confirmed in time" looks like a normal timeout while
+its `stock-reserved` sits in a dead-letter topic, so expiry is only safe together with the dead-letter
+metric (`messaging.dead.letters`, xref:adr/0005-transactional-outbox-and-inbox.adoc[ADR-0005]): the metric says that something broke, expiry keeps the stock from staying locked
+meanwhile.
+
+== Consequences
+
+* No coordinator to operate, and each service stays usable when another is down; events wait in Kafka.
+* The overall flow is only visible in this document and in tracing (s10), not in one class.
+* Every handler must be idempotent and tolerate late events; the order state machine ignores steps it
+has already passed.
+
+== Alternatives considered
+
+* *Orchestration (a saga orchestrator in order-service):* the flow lives in one place and is easier to
+change, at the cost of a central component that knows every participant. A good choice when the flow
+grows (for example with payments in s08); revisit then.
+* *Synchronous calls with compensation on error:* simple to read, but couples availability: an order
+fails whenever any participant is down.

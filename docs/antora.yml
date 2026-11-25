@@ -1,0 +1,10 @@
+name: ff-ecommerce
+title: FF E-Commerce
+version: ~
+start_page: ROOT:index.adoc
+nav:
+- modules/ROOT/nav.adoc
+- modules/architecture/nav.adoc
+- modules/business/nav.adoc
+- modules/developer/nav.adoc
+- modules/operations/nav.adoc

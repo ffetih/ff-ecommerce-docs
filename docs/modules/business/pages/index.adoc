@@ -1,0 +1,38 @@
+= Business guide
+:description: What the shop does for customers and the back office, in business terms.
+
+This part describes the shop as a business process: what a customer can do, what the back office
+does, and the rules that hold no matter which service is involved. Technical details are in the
+xref:architecture:index.adoc[architecture] and xref:developer:index.adoc[developer] guides.
+
+[cols="1,3"]
+|===
+|Page |Answers
+
+|xref:order-lifecycle.adoc[Order lifecycle]
+|Which states an order goes through, and what a customer sees in each.
+
+|xref:domain-rules.adoc[Domain rules]
+|Prices, stock, cancellation, expiry, products off sale, inactive customers.
+
+|xref:glossary.adoc[Glossary]
+|The words used across the services, with one meaning each.
+|===
+
+== Who does what
+
+[cols="1,3"]
+|===
+|Actor |Can
+
+|Customer
+|Browse the catalog without logging in; create a profile with a shipping address; place orders;
+see and cancel their own orders.
+
+|Back office (admin)
+|Create products and change prices; take products off sale; book goods receipts; see and dispatch or
+deliver shipments; see any order; deactivate customers.
+
+|Warehouse
+|Hands parcels to the carrier (dispatch) and confirms delivery, through the back-office functions.
+|===

@@ -1,0 +1,38 @@
+= Codebase map
+:description: The Maven modules and the hexagonal layout inside each service.
+
+== Modules
+
+[cols="1,3"]
+|===
+|Module |Contains
+
+|`events` |Event records with their topic and type constants: the contract between services.
+|`messaging` |Outbox, ordered relay, inbox, dead-letter handling, topic declaration, metrics.
+|`security` |Resource-server defaults: token validation, roles, deny-by-default, problem responses.
+|`test-support` |Shared Testcontainers setup, a test token issuer, stub HTTP servers.
+|`catalog-service`, `customer-service`, `order-service`, `shipping-service` |The services.
+|`gateway` |Routing only.
+|`e2e-tests` |The packaged services, end to end.
+|===
+
+== Inside a service
+
+[source]
+----
+io.github.ffetih.ecommerce.<service>
+├── domain/                  records and rules; no framework
+├── application/             use cases (services), transactions through a port
+│   └── port/                interfaces the application needs: repositories, events, clients
+├── adapter/
+│   ├── in/web/              REST controllers, problem responses
+│   ├── in/messaging/        Kafka listeners: read the envelope, call the application
+│   ├── in/scheduling/       timed work (order expiry)
+│   ├── out/persistence/     JPA or JDBC implementations of repository ports
+│   ├── out/messaging/       outbox implementations of event ports
+│   └── out/http/            clients of other services
+└── config/                  wiring, settings, security rules
+----
+
+Dependencies point inwards: adapters know the application, the application knows the domain, never
+the other way round (xref:architecture:adr/0001-hexagonal-architecture.adoc[ADR-0001]).

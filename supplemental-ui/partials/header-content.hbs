@@ -1,0 +1,34 @@
+<header class="header">
+  <nav class="navbar">
+    <div class="navbar-brand">
+      <a class="navbar-item" href="{{{or site.url siteRootPath}}}">{{site.title}}</a>
+      {{#if env.SITE_SEARCH_PROVIDER}}
+      <div class="navbar-item search hide-for-print">
+        <div id="search-field" class="field">
+          <input id="search-input" type="text" placeholder="Search the docs"{{#if page.home}} autofocus{{/if}}>
+        </div>
+      </div>
+      {{/if}}
+      <button class="navbar-burger" aria-controls="topbar-nav" aria-expanded="false" aria-label="Toggle main menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    </div>
+    <div id="topbar-nav" class="navbar-menu">
+      <div class="navbar-end">
+        <a class="navbar-item" href="{{{relativize '/ff-ecommerce/architecture/index.html'}}}">Architect</a>
+        <a class="navbar-item" href="{{{relativize '/ff-ecommerce/business/index.html'}}}">Business</a>
+        <a class="navbar-item" href="{{{relativize '/ff-ecommerce/developer/index.html'}}}">Developer</a>
+        <a class="navbar-item" href="{{{relativize '/ff-ecommerce/operations/index.html'}}}">Operations</a>
+        <div class="navbar-item has-dropdown is-hoverable">
+          <a class="navbar-link" href="https://github.com/ffetih/ff-ecommerce">GitHub</a>
+          <div class="navbar-dropdown">
+            <a class="navbar-item" href="https://github.com/ffetih/ff-ecommerce">ff-ecommerce (code)</a>
+            <a class="navbar-item" href="https://github.com/ffetih/ff-ecommerce-docs">ff-ecommerce-docs (this site)</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </nav>
+</header>

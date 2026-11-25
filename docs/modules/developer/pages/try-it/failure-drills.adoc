@@ -1,0 +1,90 @@
+= Try it: failure drills
+:description: Remove one safeguard at a time, run the test that proves it, and read why it fails.
+
+Each drill takes a safeguard away on a throwaway branch and runs the test that proves it. The red
+output shows exactly what the safeguard prevents. Afterwards, discard the change.
+
+[source,bash]
+----
+git switch -c lab/<drill>
+# change the code as described, run the test, read the failure
+git restore . && git switch - && git branch -D lab/<drill>
+----
+
+== Replayed order-placed
+
+Story: xref:architecture:consistency/replayed-order-placed.adoc[A replayed order-placed].
+
+* *Change:* in `ReservationService.attemptReservation` (catalog), delete the `if (… RELEASED)` block.
+* *Run:* `./mvnw verify -pl catalog-service -Dit.test='SagaParticipationIT#aReplayedOrderPlaced*'`
+* *Expect:* the replies are `stock-reserved` twice instead of `stock-reserved` then
+  `stock-reservation-failed`: catalog claims stock it does not hold.
+
+== Replayed order-confirmed
+
+Story: xref:architecture:consistency/replayed-order-confirmed.adoc[A replayed order-confirmed].
+
+* *Change:* in `ShippingService.orderConfirmed`, delete the `cancelledOrders.contains(orderId)` check.
+* *Run:* `./mvnw verify -pl shipping-service -Dit.test='ShippingSagaIT#aConfirmationReplayed*'`
+* *Expect:* a shipment exists for an order whose cancellation shipping had accepted.
+
+== Delivery without dispatch
+
+Story: xref:architecture:consistency/delivery-without-dispatch.adoc[A delivery without a dispatch].
+
+* *Change:* in `Order.deliver`, let `CONFIRMED` through like `SHIPPED`.
+* *Run:* `./mvnw verify -pl order-service -Dit.test=SagaReactionsIT` and `./mvnw test -pl order-service`
+* *Expect:* an order becomes `DELIVERED` although its stock was never committed.
+
+== Two expiry scanners
+
+Story: xref:architecture:consistency/stuck-orders.adoc[Orders that stop moving].
+
+* *Change:* in `OrderJpaRepository.lockIfFree`, replace `FOR UPDATE SKIP LOCKED` with `FOR UPDATE`.
+* *Run:* `./mvnw verify -pl order-service -Dit.test=OrderExpiryIT`
+* *Expect:* still green. Why? The second scanner now waits instead of skipping, then re-checks the
+  status under the lock and finds the order already handled. `SKIP LOCKED` is about throughput; the
+  re-check is what makes it correct. Now remove the re-check too and run again.
+
+== Inbox shorter than the topic
+
+Story: xref:architecture:consistency/inbox-forgets.adoc[An inbox that forgets too early].
+
+* *Change:* none in code. Start a service with `--ecommerce.messaging.inbox.retention=7d`.
+* *Expect:* it refuses to start, and the message explains which events would be processed twice.
+
+== A dead letter, live
+
+Story: xref:architecture:consistency/silent-failures.adoc[Failures nobody sees].
+
+* *Do:* with the stack running, send order-service something it cannot read:
++
+[source,bash]
+----
+docker compose exec -it kafka /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 --topic shipping.shipments     # type a line, then Ctrl+C
+curl -s -H "Authorization: Bearer $(token admin)" \
+  localhost:8083/actuator/metrics/messaging.dead.letters | jq '{measurements, availableTags}'
+----
+* *Expect:* the counter, tagged `topic=shipping.shipments` and `exception=MalformedEventException`;
+  the record in `shipping.shipments-dlt` in Kafka UI; the partition moved on.
+
+== The cancellation race, live
+
+Story: xref:architecture:consistency/cancel-dispatch-race.adoc[A cancellation racing a dispatch].
+
+* *Do:* with a `CONFIRMED` order and its shipment id (see xref:try-it/order-to-delivery.adoc[]),
+  fire both at once:
++
+[source,bash]
+----
+curl -s -o /dev/null -w 'cancel %{http_code}\n' -X POST $GW/orders/$ORDER/cancel \
+  -H "Authorization: Bearer $ALICE" -H "$J" -d '{"reason":"race"}' &
+curl -s -o /dev/null -w 'dispatch %{http_code}\n' -X POST $GW/shipments/$SHIP/dispatch \
+  -H "Authorization: Bearer $ADMIN" &
+wait; sleep 2
+curl -s $GW/orders/$ORDER -H "Authorization: Bearer $ALICE" | jq .status
+curl -s $GW/stock/$SKU -H "Authorization: Bearer $ADMIN" | jq
+----
+* *Expect:* either `CANCELLED` with the stock available again, or `SHIPPED` with the stock committed.
+  Never `CANCELLED` with the parcel gone. Repeat a few times; `CancellationRaceIT` does it 20 times.

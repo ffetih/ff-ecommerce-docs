@@ -1,0 +1,36 @@
+= ADR-0001: Hexagonal architecture inside each service
+
+* *Status:* Accepted
+* *Date:* 2026-11-25
+
+== Context
+
+Each service has real business rules (stock invariants, order state transitions, payment states)
+and several technical integrations (PostgreSQL, Kafka, HTTP). We want to test business rules fast and
+in isolation, and to change an integration without touching the rules.
+
+== Decision
+
+Every service uses ports and adapters:
+
+....
+domain/        model, invariants, domain exceptions   (no framework imports)
+application/   use cases, inbound and outbound ports  (no framework imports)
+adapter/in/    web controllers, Kafka listeners
+adapter/out/   persistence, HTTP clients, messaging
+config/        Spring wiring, transaction boundaries
+....
+
+Transaction boundaries are declared at the application-service level through Spring configuration,
+not inside the domain.
+
+== Consequences
+
+* Business rules are covered by plain unit tests without a Spring context.
+* More mapping code between domain objects and JPA entities / DTOs.
+* Transaction behaviour must be verified with integration tests, because unit tests cannot see it.
+
+== Alternatives considered
+
+* *Layered (controller / service / repository) with JPA entities as the domain model:* less code,
+but persistence concerns leak into business rules and tests need a database.

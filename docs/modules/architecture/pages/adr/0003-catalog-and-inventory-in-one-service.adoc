@@ -1,0 +1,34 @@
+= ADR-0003: Catalog and inventory in one service
+
+* *Status:* Accepted
+* *Date:* 2026-11-25
+
+== Context
+
+An order needs two facts about each product at the moment it is placed: the current price and
+whether enough stock can be held for it. Prices must come from the server, never from the client.
+Stock must be reserved atomically across all lines of an order.
+
+== Decision
+
+One `catalog-service` owns products, prices, stock levels and reservations, as separate aggregates
+(`Product`, `StockItem`, `Reservation`) inside one database.
+
+* Stock is modelled as `on_hand` and `reserved`; `available = on_hand - reserved`.
+* A reservation is keyed by the order id and covers all order lines. It is all-or-nothing and moves
+`RESERVED -> COMMITTED` (goods shipped) or `RESERVED -> RELEASED` (order cancelled).
+* Stock rows of one reservation are locked with `SELECT ... FOR UPDATE` in SKU order, so two
+reservations touching the same SKUs always lock in the same order and cannot deadlock.
+
+== Consequences
+
+* Reserving a multi-line order is a single local ACID transaction, not a distributed one.
+* Pricing and stock scale together. Acceptable at this size; they can be split later along the
+existing aggregate boundaries, with the order service reading prices from a catalog read model.
+
+== Alternatives considered
+
+* *Separate catalog and inventory services:* cleaner ownership, but placing an order would need
+two synchronous calls or a price read model from the first sprint, with no benefit yet.
+* *Optimistic locking with retries:* works well under low contention, but hot SKUs during a sale
+would cause retry storms. Row locks make contention explicit and bounded.

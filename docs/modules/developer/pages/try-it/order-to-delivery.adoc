@@ -1,0 +1,71 @@
+= Try it: an order from placing to delivery
+:description: Walk one order through the whole saga with curl, and watch the events in Kafka UI.
+
+Prerequisites: infrastructure and all services running (xref:local-run.adoc[local run]), plus
+Kafka UI (`docker compose --profile tools up -d`, http://localhost:8090) to watch the topics.
+
+== Set up
+
+[source,bash]
+----
+source scripts/dev-auth.sh
+GW=http://localhost:8080/api/v1
+ADMIN=$(token admin); ALICE=$(token alice)
+SKU=KB-$RANDOM
+J='Content-Type: application/json'
+----
+
+== 1. Back office: a product with stock
+
+[source,bash]
+----
+curl -s -X POST $GW/products -H "Authorization: Bearer $ADMIN" -H "$J" \
+  -d "{\"sku\":\"$SKU\",\"name\":\"Keyboard\",\"unitPrice\":89.90,\"currency\":\"EUR\"}" | jq
+curl -s -X POST $GW/stock/$SKU/receipts -H "Authorization: Bearer $ADMIN" -H "$J" \
+  -d "{\"referenceId\":\"$(cat /proc/sys/kernel/random/uuid)\",\"quantity\":10}" | jq
+----
+
+== 2. Customer: profile and order
+
+[source,bash]
+----
+curl -s -X POST $GW/customers/me -H "Authorization: Bearer $ALICE" -H "$J" \
+  -d '{"fullName":"Alice Example","shippingAddress":"Bağdat Cd. 1, İstanbul"}' | jq   # 409 if it exists
+
+KEY=$(cat /proc/sys/kernel/random/uuid)
+ORDER=$(curl -s -X POST $GW/orders -H "Authorization: Bearer $ALICE" -H "$J" -H "Idempotency-Key: $KEY" \
+  -d "{\"lines\":[{\"sku\":\"$SKU\",\"quantity\":2}]}" | jq -r .id)
+echo $ORDER
+curl -s $GW/orders/$ORDER -H "Authorization: Bearer $ALICE" | jq '{status, totalAmount}'
+----
+
+Expect `CONFIRMED` within a second. In Kafka UI, `order.lifecycle` shows `order-placed` and
+`order-confirmed`, and `catalog.reservations` shows `stock-reserved`, all with the order id as key.
+
+Send the same order request again with the same `$KEY`: the answer is the same order, `200`, with
+`Idempotent-Replayed: true` (add `-i` to see the headers).
+
+== 3. Warehouse: dispatch and deliver
+
+[source,bash]
+----
+SHIP=$(curl -s "$GW/shipments?orderId=$ORDER" -H "Authorization: Bearer $ADMIN" | jq -r .id)
+curl -s -X POST $GW/shipments/$SHIP/dispatch -H "Authorization: Bearer $ADMIN" | jq '{status, trackingNumber}'
+curl -s $GW/orders/$ORDER -H "Authorization: Bearer $ALICE" | jq .status     # SHIPPED
+curl -s $GW/stock/$SKU -H "Authorization: Bearer $ADMIN" | jq                 # onHand 8, reserved 0
+curl -s -X POST $GW/shipments/$SHIP/deliver -H "Authorization: Bearer $ADMIN" | jq .status
+curl -s $GW/orders/$ORDER -H "Authorization: Bearer $ALICE" | jq .status     # DELIVERED
+----
+
+== 4. Variations
+
+* Place a second order and cancel it while `CONFIRMED`: the answer is `202`, then the order becomes
+  `CANCELLED` and the stock is available again.
++
+[source,bash]
+----
+curl -s -X POST $GW/orders/$ORDER2/cancel -H "Authorization: Bearer $ALICE" -H "$J" \
+  -d '{"reason":"changed my mind"}' -w '\n%{http_code}\n'
+----
+* Cancel the delivered order: `409`.
+* Read alice's order with bob's token (`$(token bob)`): `404`, as if it did not exist.

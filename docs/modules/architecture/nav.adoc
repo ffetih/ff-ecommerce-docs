@@ -1,0 +1,13 @@
+.Architecture (Architect)
+* xref:index.adoc[Architecture overview]
+* xref:saga.adoc[The order saga]
+* xref:consistency/index.adoc[Consistency: seven failure stories]
+** xref:consistency/cancel-dispatch-race.adoc[A cancellation racing a dispatch]
+** xref:consistency/delivery-without-dispatch.adoc[A delivery without a dispatch]
+** xref:consistency/stuck-orders.adoc[Orders that stop moving]
+** xref:consistency/silent-failures.adoc[Failures nobody sees]
+** xref:consistency/replayed-order-placed.adoc[A replayed order-placed]
+** xref:consistency/replayed-order-confirmed.adoc[A replayed order-confirmed]
+** xref:consistency/inbox-forgets.adoc[An inbox that forgets too early]
+* xref:security.adoc[Security model]
+* xref:adr/index.adoc[Decisions (ADRs)]

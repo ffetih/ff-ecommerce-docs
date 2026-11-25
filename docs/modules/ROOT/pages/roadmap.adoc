@@ -1,0 +1,26 @@
+= Sprints and roadmap
+:description: What each sprint delivered and what comes next.
+
+The project is built sprint by sprint. A sprint is done when the build is green locally and in CI,
+its main claim is proven by an integration test against real PostgreSQL and Kafka, significant
+decisions are recorded as ADRs, *these docs are updated*, and the sprint is tagged (`sNN`).
+
+[cols="1,2,4,1"]
+|===
+|Sprint |Goal |Outcome |Status
+
+|s00 |Foundation |Maven build, local infrastructure, Testcontainers, CI |done
+|s01 |Catalog and inventory |Server-side prices; concurrency-safe reserve, commit and release |done
+|s02 |Messaging |Transactional outbox with ordered relay, inbox, dead-letter topics |done
+|s03 |Customers and orders |Catalog-priced, idempotent order placement; forward-only order status |done
+|s04 |Shipping and the saga |Reserve, confirm, ship, deliver, cancel with compensation; end-to-end tests |done
+|s05 |Security |Keycloak; resource servers with enforced deny-by-default; service tokens; routing-only gateway |done
+|s06 |Saga hardening |Cancellation decided by shipping; delivery only after dispatch; order expiry; outbox and dead-letter metrics; replay guards; inbox retention |done
+|s07 |Documentation |This site: role-based guides, failure stories, runbooks |in progress
+|s08 |Payments |Authorize, capture, refund with idempotency and a double-entry ledger; orchestration vs choreography revisited |planned
+|s09 |Returns |Concurrency-safe return limits; refunds through payments |planned
+|s10 |Observability |Distributed tracing, dashboards, alerts |planned
+|s11 |Packaging |Container images, one-command stack, Kubernetes manifests, Kafka authentication |planned
+|===
+
+A web console (customer shop and back-office saga view) is built in parallel in a separate repository.

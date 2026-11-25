@@ -1,0 +1,104 @@
+= Architecture overview
+:description: The services, how they talk to each other, and the decisions behind them.
+
+FF E-Commerce takes an order from placement to delivery across four services, each with its own
+database. Nothing spans two databases in one transaction: services agree through events, and every
+step is built so that a message arriving late, twice, or not at all leaves the system consistent.
+
+== The running system
+
+[plantuml,system-context,svg]
+----
+@startuml
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName sans-serif
+
+actor "Customer /\nback office" as user
+node "Keycloak\n(ecommerce realm)" as kc
+component "gateway\n:8080" as gw
+
+package "Services (one database each)" {
+  component "catalog-service\n:8081" as cat
+  component "customer-service\n:8082" as cus
+  component "order-service\n:8083" as ord
+  component "shipping-service\n:8084" as shp
+}
+
+queue "Kafka\norder.lifecycle\ncatalog.reservations\nshipping.shipments\ncatalog.stock" as kafka
+
+user --> kc : log in
+user --> gw : HTTPS + token
+gw --> cat
+gw --> cus
+gw --> ord
+gw --> shp
+ord ..> cus : profile (machine token)
+ord ..> cat : prices (machine token)
+cat <--> kafka
+ord <--> kafka
+shp <--> kafka
+@enduml
+----
+
+* *Synchronous calls* only where an answer is needed before anything is stored: placing an order
+  reads the customer and the current prices.
+* *Events* for everything that happens afterwards: reserving stock, preparing the parcel, cancelling,
+  dispatching, delivering.
+
+== Services
+
+[cols="1,1,3"]
+|===
+|Service |Owns |Responsibility
+
+|`catalog-service` |products, stock, reservations
+|Products and prices; goods receipts; reserve, commit and release stock per order.
+
+|`customer-service` |customers
+|Customer profiles keyed by the Keycloak user id; shipping addresses; deactivation.
+
+|`order-service` |orders
+|Order placement at catalog prices, idempotent per `Idempotency-Key`; the order lifecycle; order expiry.
+
+|`shipping-service` |shipments
+|One shipment per confirmed order; dispatch and delivery; decides cancellations of confirmed orders.
+
+|`gateway` |nothing
+|Routes each API path to its service. Makes no access decision: every service checks the token itself.
+|===
+
+== Building blocks
+
+Each block is a decision with a record:
+
+[cols="1,3"]
+|===
+|Building block |Decision
+
+|Hexagonal services |Domain and application code have no framework dependency; adapters connect them
+(xref:adr/0001-hexagonal-architecture.adoc[ADR-0001]).
+
+|Database per service |No shared tables, no cross-service joins
+(xref:adr/0002-database-per-service.adoc[ADR-0002]).
+
+|Explicit transactions |The application layer opens transactions through a port, so their boundaries
+are visible in code (xref:adr/0004-explicit-transaction-boundaries.adoc[ADR-0004]).
+
+|Outbox and inbox |Events are written with the business change and relayed in order; consumers
+skip what they have already processed (xref:adr/0005-transactional-outbox-and-inbox.adoc[ADR-0005]).
+
+|Choreographed saga |Order, catalog and shipping react to each other's events; shipping owns the
+point of no return (xref:adr/0007-order-saga.adoc[ADR-0007], xref:saga.adoc[the saga]).
+
+|Security |Every service is a resource server with deny-by-default rules
+(xref:adr/0008-security.adoc[ADR-0008], xref:security.adoc[security model]).
+|===
+
+== Quality goals
+
+. *Consistent under failure.* Stock, orders and parcels never disagree for good, whatever the order
+  or the number of times messages arrive. xref:consistency/index.adoc[Seven failure stories] show how.
+. *Visible when stuck.* A step that cannot happen is measured, not silently lost
+  (xref:operations:metrics.adoc[metrics]).
+. *Secure by default.* An endpoint nobody listed is closed.

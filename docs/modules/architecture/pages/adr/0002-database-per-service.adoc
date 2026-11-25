@@ -1,0 +1,27 @@
+= ADR-0002: Database per service on a shared local PostgreSQL instance
+
+* *Status:* Accepted
+* *Date:* 2026-11-25
+
+== Context
+
+Services must own their data so they can evolve independently. Running one PostgreSQL container per
+service locally costs memory without adding learning value.
+
+== Decision
+
+* Each service has its own database and its own database user; no service reads another service's tables.
+* Locally, all databases live in one PostgreSQL 17 container.
+* Each service owns its schema through Flyway migrations; Hibernate runs with `ddl-auto: validate`.
+* Data needed from another service is obtained through its API or its events.
+
+== Consequences
+
+* Cross-service queries are impossible by design; read models are built from events where needed.
+* Consistency across services is eventual and handled with sagas and the outbox pattern.
+* Locally, one PostgreSQL outage affects all services. This is acceptable for development only.
+
+== Alternatives considered
+
+* *Shared schema:* simplest, but couples services through tables.
+* *One container per service:* closer to production isolation, but heavy for a laptop.

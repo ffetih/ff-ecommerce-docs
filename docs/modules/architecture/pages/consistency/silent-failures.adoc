@@ -1,0 +1,38 @@
+= Failures nobody sees
+:description: Events stop reaching Kafka, or a consumer gives up on one, and nothing tells anyone.
+
+// Story to write in your own words. Keep the four sections; delete the NOTE block when done.
+
+== The scenario
+
+Events stop reaching Kafka, or a consumer gives up on one, and nothing tells anyone.
+
+== What would go wrong
+
+// Without the fix: which services disagree, and what does a customer or the warehouse see?
+
+== The fix
+
+// What the system does now, and why this service is the one that decides.
+
+== How it is proven
+
+* `OutboxMetricsIT`
+* `InboxIT` (dead-letter counter)
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
+
+== When it happens in production
+
+See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts].
+
+Decision record: xref:adr/0005-transactional-outbox-and-inbox.adoc[ADR-0005].
+
+[NOTE]
+.Facts to build on (remove when the story is written)
+====
+* An outbox stuck behind a failing message keeps other services from hearing about changes.
+* A dead-lettered record is a saga step that did not happen; nothing retries it.
+* Fix: `outbox.pending`, `outbox.oldest.pending.age` and `messaging.dead.letters{topic, exception}` in every service using the messaging module.
+* A failed read reports NaN, not a reassuring zero; a dead letter is counted only after the dead-letter topic has taken it.
+====

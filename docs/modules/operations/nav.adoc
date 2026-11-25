@@ -1,0 +1,6 @@
+.Operations (DevOps)
+* xref:index.adoc[Operations guide]
+* xref:metrics.adoc[Metrics and alerts]
+* xref:dead-letters.adoc[Runbook: dead letters]
+* xref:configuration.adoc[Configuration reference]
+* xref:keycloak.adoc[Keycloak realm and clients]

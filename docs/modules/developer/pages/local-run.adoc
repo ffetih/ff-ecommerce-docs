@@ -1,0 +1,78 @@
+= Local run and tests
+:description: Infrastructure, services, tokens, and the three levels of tests.
+
+Requires JDK 25, Docker, and for the token helpers `curl` and `jq`.
+
+== Infrastructure
+
+[source,bash]
+----
+docker compose up -d --wait               # PostgreSQL 17 :5432, Kafka :9092, Keycloak :8180
+docker compose --profile tools up -d      # adds Kafka UI on http://localhost:8090
+docker compose down                       # stop (add -v to also delete data)
+----
+
+== Build once, then run services
+
+Shared modules (`events`, `messaging`, `security`, `test-support`) must be in your local Maven
+repository before a single service can start on its own:
+
+[source,bash]
+----
+./mvnw -q install -DskipTests -T 1C       # after changing any shared module
+./mvnw -pl order-service spring-boot:run  # or run the *Application class from the IDE
+----
+
+[cols="1,1"]
+|===
+|Service |Port
+
+|gateway |8080
+|catalog-service |8081
+|customer-service |8082
+|order-service |8083
+|shipping-service |8084
+|===
+
+[TIP]
+====
+On WSL with services running in the Windows IDE, set `networkingMode=mirrored` in `.wslconfig`, then
+`wsl --shutdown`, so `localhost` from WSL reaches them.
+====
+
+== Tokens
+
+Keycloak runs the `ecommerce` realm (users `alice`, `bob`, `admin`; the password is the username):
+
+[source,bash]
+----
+source scripts/dev-auth.sh
+jwt "$(token alice)"                      # claims of alice's access token
+jwt "$(service-token order-service)"      # order-service's machine token
+----
+
+== Tests
+
+[source,bash]
+----
+./mvnw verify                        # everything: unit, integration and end-to-end
+./mvnw test                          # unit tests only
+./mvnw verify -pl '!e2e-tests'       # skip the end-to-end tests
+./mvnw verify -pl catalog-service -Dit.test='SagaParticipationIT'   # one integration test class
+----
+
+[cols="1,3"]
+|===
+|Level |What it covers
+
+|Unit (`*Test`)
+|Domain rules and application services with in-memory fakes; milliseconds.
+
+|Integration (`*IT`)
+|One service with real PostgreSQL and Kafka (Testcontainers). Other services are played by the
+test, as stub HTTP servers or by publishing their events.
+
+|End-to-end (`e2e-tests`)
+|The packaged services as separate processes against shared containers; the whole saga driven
+through the gateway only.
+|===

@@ -1,0 +1,96 @@
+= API and login for the UI
+:description: What a browser client needs: same-origin calls through a dev proxy, Keycloak login with PKCE, and the asynchronous order states.
+
+This page is for the web console team. It lists the decisions a browser client must follow so that it
+gets the guarantees the backend gives.
+
+== Calls go same-origin
+
+The console calls `/api/...` on its own origin; the Vite dev server forwards those calls to the
+gateway. The browser never makes a cross-origin API call, so the backend needs no CORS, and
+deny-by-default stays untouched (a CORS preflight would otherwise reach the services and be denied).
+
+[source,js]
+----
+// vite.config.ts
+export default defineConfig({
+  server: {
+    port: 5173,
+    proxy: { '/api': 'http://localhost:8080' },
+  },
+})
+----
+
+In production the built console is served behind the same origin as the API.
+
+== Login: Authorization Code with PKCE
+
+The console never shows a password form: "Log in" goes to Keycloak and comes back with a code that
+the console exchanges for tokens (for example with `oidc-client-ts`).
+
+[cols="1,3"]
+|===
+|Setting |Value
+
+|Authority |`http://localhost:8180/realms/ecommerce`
+|Client |`shop` (public, standard flow, PKCE `S256`)
+|Redirect URI |`http://localhost:5173/*`
+|Web origins |`http://localhost:5173` (the browser calls Keycloak's token endpoint directly)
+|Audiences in the token |`catalog-service`, `customer-service`, `order-service`
+|Test users |`alice` / `alice`, `bob` / `bob`, `admin` / `admin`
+|===
+
+NOTE: The `shop` client is added to the realm with the console; until then, tokens from
+`scripts/dev-auth.sh` work for API experiments.
+
+[IMPORTANT]
+====
+A token that is present but invalid is rejected with `401` *even on public endpoints*. Logged out,
+call `GET /api/v1/products` without a token; logged in, refresh an expiring token before the call,
+never send an expired one.
+====
+
+== Placing an order exactly once
+
+Every order needs an `Idempotency-Key` header (a UUID). Create the key *when the order form opens*,
+send it with every attempt for that order, including retries after a timeout or a `503`, and create a
+new one only for a new order.
+
+[cols="1,3"]
+|===
+|Answer |Meaning
+
+|`201` |Order placed.
+|`200` + `Idempotent-Replayed: true` |The same order again: a retry of a request that had already succeeded.
+|`409` |The key was used for a different order. A bug in the client: never reuse a key for new content.
+|`422` |Unknown or retired product, or inactive customer. Show the problem's `detail`.
+|`503` + `Retry-After` |A dependency is down. Retry with *the same* key.
+|===
+
+== Order states are asynchronous
+
+The order is accepted before the saga has finished; the console polls `+GET /api/v1/orders/{id}+`.
+
+[cols="1,3"]
+|===
+|After |Poll until
+
+|Placing (`PLACED`)
+|`CONFIRMED`, or `CANCELLED` (for example no stock; the reason is in `cancellationReason`).
+Usually under a second.
+
+|Cancel answered `200`
+|Nothing: the order is `CANCELLED`.
+
+|Cancel answered `202` (`CANCELLATION_REQUESTED`)
+|`CANCELLED` (parcel stopped) or `SHIPPED` (parcel had already left). Show the request as pending.
+
+|Cancel answered `409`
+|Nothing: the order has shipped and cannot be cancelled.
+|===
+
+Poll with a short interval (for example 500 ms, backing off to a few seconds) and stop at a final
+state or after a timeout, showing "still processing" rather than an error.
+
+See the xref:api.adoc[API reference] for every endpoint and xref:business:order-lifecycle.adoc[the
+order lifecycle] for what each state means to a customer.

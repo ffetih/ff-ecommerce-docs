@@ -1,0 +1,60 @@
+= Metrics and alerts
+:description: The three signals that show whether the saga is moving, and when to act.
+
+Every service that uses the messaging module (catalog, order, shipping) reports:
+
+[cols="2,1,1,2"]
+|===
+|Metric |Kind |Healthy |Worth an alert
+
+|`outbox.pending`
+|gauge, messages
+|close to 0
+|keeps growing
+
+|`outbox.oldest.pending.age`
+|gauge, seconds
+|about a second
+|over a minute: a key is stuck behind a failing message, or Kafka is unreachable
+
+|`messaging.dead.letters{topic, exception}`
+|counter
+|absent or flat
+|any increase: a step of some order did not happen
+|===
+
+* The two gauges are read from the database when metrics are collected, with the database clock.
+  A failed read shows as `NaN`, not as `0`.
+* A dead letter is counted only after the dead-letter topic has accepted it. The counter appears with
+  the first dead letter.
+
+== Reading them today
+
+[source,bash]
+----
+source scripts/dev-auth.sh
+curl -s -H "Authorization: Bearer $(token admin)" \
+  localhost:8083/actuator/metrics/outbox.oldest.pending.age | jq .measurements
+curl -s -H "Authorization: Bearer $(token admin)" \
+  localhost:8083/actuator/metrics/messaging.dead.letters | jq '{measurements, availableTags}'
+----
+
+== Alert rules (with Prometheus, s10)
+
+[source,yaml]
+----
+- alert: DeadLetter
+  expr: increase(messaging_dead_letters_total[5m]) > 0
+  annotations:
+    summary: "{{ $labels.application }}: dead letter on {{ $labels.topic }} ({{ $labels.exception }})"
+- alert: OutboxStuck
+  expr: outbox_oldest_pending_age_seconds > 60
+  for: 2m
+----
+
+== Why these three
+
+A choreographed saga fails quietly: nothing throws in front of a user when an event is not
+published or not processed. The order just stops moving, and order expiry eventually cancels it,
+which looks like a normal timeout. These metrics are what tells the two apart
+(xref:architecture:consistency/silent-failures.adoc[Failures nobody sees]).

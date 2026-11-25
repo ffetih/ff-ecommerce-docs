@@ -1,0 +1,69 @@
+= Configuration reference
+:description: Every setting that changes behaviour, with its default.
+
+== Messaging (catalog, order, shipping)
+
+[cols="2,1,3"]
+|===
+|Property |Default |Meaning
+
+|`ecommerce.messaging.source` |`spring.application.name` |Name written into every event envelope.
+|`ecommerce.messaging.outbox.relay-enabled` |`true` |Run the background relay (tests switch it off).
+|`ecommerce.messaging.outbox.poll-interval` |`500ms` |Pause between relay runs when idle.
+|`ecommerce.messaging.outbox.batch-size` |`100` |Keys claimed per relay run.
+|`ecommerce.messaging.outbox.max-per-key` |`50` |Messages of one key published per run.
+|`ecommerce.messaging.outbox.send-timeout` |`5s` |Wait for the broker's acknowledgement.
+|`ecommerce.messaging.outbox.initial-backoff` |`1s` |First retry delay of a failed message; doubles.
+|`ecommerce.messaging.outbox.max-backoff` |`5m` |Upper bound of the retry delay.
+|`ecommerce.messaging.outbox.retention` |`7d` |How long published rows are kept.
+|`ecommerce.messaging.topics.retention` |`7d` |`retention.ms` of every declared topic.
+|`ecommerce.messaging.topics.dead-letter-retention` |`30d` |`retention.ms` of dead-letter topics.
+|`ecommerce.messaging.inbox.retention` |`30d` |How long processed event ids are remembered. *Must be longer than the topic retention, or the service does not start.*
+|`spring.kafka.admin.modify-topic-configs` |`true` (services) |Apply the declared retention to topics that already exist.
+|===
+
+== Order expiry (order-service)
+
+[cols="2,1,3"]
+|===
+|Property |Default |Meaning
+
+|`ecommerce.orders.expiry.enabled` |`true` |Run the scanner (tests switch it off).
+|`ecommerce.orders.expiry.placed-after` |`30m` |A PLACED order older than this is cancelled.
+|`ecommerce.orders.expiry.confirmed-after` |`3d` |A CONFIRMED order older than this is asked to cancel.
+|`ecommerce.orders.expiry.scan-interval` |`1m` |Pause between scans.
+|`ecommerce.orders.expiry.batch-size` |`100` |Orders handled per scan.
+|===
+
+== Calls between services (order-service)
+
+[cols="2,1,3"]
+|===
+|Property |Default |Meaning
+
+|`ecommerce.clients.customer.base-url` |`http://localhost:8082` |customer-service (`CUSTOMER_SERVICE_URL`).
+|`ecommerce.clients.catalog.base-url` |`http://localhost:8081` |catalog-service (`CATALOG_SERVICE_URL`).
+|`ecommerce.clients.*.connect-timeout`, `read-timeout` |`2s`, `3s` |Per downstream service.
+|`ecommerce.clients.token-connect-timeout`, `token-read-timeout` |`2s`, `3s` |Calls to Keycloak's token endpoint.
+|===
+
+== Security (every service)
+
+[cols="2,1,3"]
+|===
+|Property |Default |Meaning
+
+|`spring.security.oauth2.resourceserver.jwt.issuer-uri` |`http://localhost:8180/realms/ecommerce` (`ISSUER_URI`) |Required: without it the service does not start.
+|`spring.security.oauth2.resourceserver.jwt.audiences` |the service's name |Required: tokens must name this service.
+|===
+
+== Gateway
+
+[cols="2,1,3"]
+|===
+|Property |Default |Meaning
+
+|`spring.http.clients.connect-timeout` |`2s` |Connecting to a service; failure answers `502`.
+|`spring.http.clients.read-timeout` |`10s` |Waiting for a service's answer; a timeout answers `504`.
+|`CATALOG_SERVICE_URL`, `CUSTOMER_SERVICE_URL`, `ORDER_SERVICE_URL`, `SHIPPING_SERVICE_URL` |`localhost:808x` |Where each route goes.
+|===

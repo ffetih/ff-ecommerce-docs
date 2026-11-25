@@ -1,0 +1,39 @@
+= ADR-0004: Explicit transaction boundaries in application services
+
+* *Status:* Accepted
+* *Date:* 2026-11-25
+
+== Context
+
+The previous version of this project lost its saga compensation: a Kafka listener annotated with
+`@Transactional` called a use case that was also `@Transactional`. When the use case threw, Spring
+marked the shared transaction rollback-only before the listener's `catch` block ran. The listener
+then wrote a compensating event, and the commit failed with `UnexpectedRollbackException`, discarding
+everything. The bug was invisible in unit tests and in the code that looked responsible for it.
+
+Nested declarative transactions hide where a transaction starts, where it ends, and which exception
+decides its outcome.
+
+== Decision
+
+* Application services own the transaction boundary and declare it in code through a small port:
+`Transactions.inTransaction(() -> ...)`, implemented with Spring's `TransactionTemplate`.
+* One use case is one transaction. Adapters (controllers, listeners, persistence) do not declare
+transactions of their own.
+* A business failure that should still be recorded (for example "reservation failed, publish a
+compensation event") is returned as a result or handled inside the same `inTransaction` block,
+never caught outside a boundary that has already decided to roll back.
+
+== Consequences
+
+* The boundary is visible when reading the service, and the domain and application code stay free of
+Spring annotations.
+* Integration tests must cover transactional behaviour, because the boundary is real database work.
+* Slightly more code than putting `@Transactional` on every method.
+
+== Alternatives considered
+
+* *`@Transactional` on application services:* idiomatic and shorter, but ties the application layer
+to Spring and makes nested boundaries easy to create by accident.
+* *`noRollbackFor` on specific exceptions:* fixes one symptom, but keeps the hidden coupling between
+layers that caused the bug.

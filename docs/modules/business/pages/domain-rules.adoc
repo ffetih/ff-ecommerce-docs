@@ -1,0 +1,42 @@
+= Domain rules
+:description: The business rules every service enforces, whatever the technical path.
+
+[cols="1,3"]
+|===
+|Topic |Rule
+
+|Prices
+|The price of an order line is the catalog price at the moment of placing. The customer's request
+cannot set a price.
+
+|Stock
+|An order reserves all its lines or none. Reserved units cannot be sold twice; they leave stock when
+the parcel is handed to the carrier, and become available again when the order is cancelled.
+
+|Placing twice
+|A customer who sends the same order twice (a double click, a retry after a timeout) gets one order.
+The repeated request returns the same order.
+
+|Cancellation
+|A placed order is cancelled at once. A confirmed order is cancelled only if its parcel has not left;
+the answer comes from the warehouse. A shipped order cannot be cancelled.
+
+|Order expiry
+|An order that is not confirmed within 30 minutes is cancelled ("Not confirmed in time"). A confirmed
+order not handed to the carrier within 3 days is cancelled if the parcel can still be stopped
+("Not dispatched in time"). Both times are configurable.
+
+|Delivery
+|An order can only be delivered after it was shipped.
+
+|Products off sale
+|A deactivated product cannot be ordered any more. Orders placed before keep their reservation and
+complete normally.
+
+|Inactive customers
+|A deactivated customer cannot place new orders.
+
+|Privacy of orders
+|A customer only sees their own orders. Someone else's order looks exactly like one that does not
+exist.
+|===

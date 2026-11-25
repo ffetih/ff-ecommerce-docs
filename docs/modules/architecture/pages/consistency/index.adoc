@@ -1,0 +1,37 @@
+= Consistency: seven failure stories
+:description: Each rule in the saga exists because of one concrete way the system could end up wrong.
+
+Every service is consistent on its own. The hard part is between them: a message can arrive late,
+twice, or not at all, and two things can happen at the same moment in two services. Each story below
+is one such situation, what would have gone wrong, what the system does instead, and the test that
+proves it.
+
+[cols="1,2"]
+|===
+|Story |Situation
+
+|xref:consistency/cancel-dispatch-race.adoc[A cancellation racing a dispatch]
+|The customer cancels a confirmed order at the moment the warehouse hands the parcel to the carrier.
+
+|xref:consistency/delivery-without-dispatch.adoc[A delivery without a dispatch]
+|`shipment-delivered` reaches order-service for an order that never became SHIPPED.
+
+|xref:consistency/stuck-orders.adoc[Orders that stop moving]
+|An event the next step needs ends in a dead-letter topic, and the order waits forever.
+
+|xref:consistency/silent-failures.adoc[Failures nobody sees]
+|Events stop reaching Kafka, or a consumer gives up on one, and nothing tells anyone.
+
+|xref:consistency/replayed-order-placed.adoc[A replayed order-placed]
+|`order-placed` arrives again after the order was cancelled and its reservation released, and the inbox no longer recognises it.
+
+|xref:consistency/replayed-order-confirmed.adoc[A replayed order-confirmed]
+|An order's confirmation was dead-lettered, shipping accepted its cancellation without a shipment, and later someone replays the dead letter.
+
+|xref:consistency/inbox-forgets.adoc[An inbox that forgets too early]
+|A consumer group's offsets are lost (they expire while the service is down, or someone resets them), and Kafka delivers everything still in the topic again.
+|===
+
+Each story is told three times, from three angles: *why* it is designed this way (here), *break it
+and watch it* (xref:developer:try-it/failure-drills.adoc[failure drills]), and *what to do when it
+happens* (xref:operations:dead-letters.adoc[runbook]).

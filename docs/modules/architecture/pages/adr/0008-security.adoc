@@ -1,0 +1,110 @@
+= ADR-0008: Security: every service checks tokens itself, the gateway only routes
+
+* *Status:* Accepted
+* *Date:* 2026-11-25
+
+== Context
+
+The previous version had no authentication at all. Its gateway decided access by comparing path
+strings, and it proxied documentation paths to arbitrary hosts. Clients chose the customer of an
+order in the request body. Any of these alone lets a caller act as someone else.
+
+What we need:
+
+* every request to every service carries a verifiable identity;
+* a service accepts only tokens meant for it;
+* people only see and change their own data;
+* services can call each other without borrowing a user's identity;
+* a mistake in configuration fails loudly at startup, not silently in production.
+
+== Decision
+
+*Identity provider.* Keycloak issues signed JWT access tokens. The realm is code
+(`infra/keycloak/import/ecommerce-realm.json`), imported when the container is created, and the
+same file is used by `compose.yaml` and by the end-to-end tests. Realm roles: `customer`, `admin`,
+`service`.
+
+*Every service is an OAuth2 resource server.* It is configured with the issuer and its own name as
+audience, and nothing else:
+
+* signing keys are discovered from the issuer and cached; tokens are verified locally, so Keycloak
+is not on the path of each request;
+* a token is rejected (401) unless its signature, `iss`, `exp`/`nbf` and `aud` (containing the
+service's name) are all valid;
+* a service without an issuer or an audience does not start.
+
+*Deny by default, enforced.* Services declare their rules through the shared `security` module:
+`ResourceServerSecurity.build(http, allow -> …)` lists only what is allowed, by method and path, and
+always appends `anyRequest().denyAll()`. A service whose filter chains were not all built this way
+does not start, so neither Spring Boot's default chain ("any valid token, any endpoint") nor a
+hand-written chain can slip in. The module also fixes the actuator: health stays open for probes,
+`/actuator/metrics` needs the `admin` role, because queue sizes and error counts help an attacker too.
+A monitoring system gets its own access in s10.
+
+*Identity comes from the token, never from the request.*
+
+* A customer's id is the Keycloak user id (`sub`), so there is no mapping table to keep in sync.
+* Registration (`POST /customers/me`) takes the email from the token.
+* `POST /orders` has no customer field; the order belongs to the caller.
+
+*Ownership is decided in the application layer.* Path rules decide who may call an endpoint at
+all; whose order it is can only be decided once the order is loaded. The adapter turns the token
+into a plain `Requester` (a customer with an id, or the back office); the application checks it.
+
+* Someone else's order answers *404*, exactly like an unknown id, so ids cannot be probed.
+* Listing someone else's orders answers *403*: the customer id is in the request, nothing to hide.
+
+*Services call each other with their own token.* order-service gets a token for itself (client
+credentials, role `service`, audience `catalog-service` and `customer-service` only) and never
+forwards the user's token.
+
+* The token is cached until shortly before it expires.
+* The token request has its own timeouts: a hanging issuer fails an order with 503, it does not hang it.
+* If a called service answers 401, the cached token is dropped, a fresh one fetched, and the call
+repeated once (all such calls are idempotent GETs).
+
+*The gateway only routes.* It forwards each API prefix, with the `Authorization` header, to the
+service that owns it, and forwards nothing else: no catch-all route, no documentation proxying. It
+makes no authorization decision. A request that gets around the gateway meets exactly the same
+checks. A service that cannot be reached is reported as 502 (no valid answer) or 504 (no answer in
+time), not 500.
+
+*Errors.* 401 and 403 are RFC 9457 problem responses with a generic body; the technical reason is
+only in the RFC 6750 `WWW-Authenticate` header.
+
+== Consequences
+
+* Each rule exists once, next to the code it protects, and is tested against real signed tokens
+(`TestTokenIssuer` in integration tests, the real Keycloak in end-to-end tests).
+* Adding a service means: depend on `security`, set issuer and audience, list its endpoints.
+Forgetting one of these stops the service at startup.
+* Known limits, accepted for now:
+** *Audience does not separate services for people.* User tokens (`ecommerce-cli`,
+`ecommerce-dev`) carry all four audiences; roles and ownership do the separation. Audience is a
+real boundary for machine tokens only.
+** *The realm is for local development and tests.* The password-grant client `ecommerce-dev`,
+the client secret `order-service-secret` and the user passwords must not reach any other
+environment.
+** *Kafka is not authenticated.* Any process that can reach the broker can publish events that
+services trust. SASL and ACLs belong with packaging and deployment.
+** Registration trusts the token's `email` without checking `email_verified`; the local realm marks
+every user as verified.
+** Signing keys are downloaded with Spring Security's default timeout (30 seconds since 7.2), once,
+then cached.
+** The OAuth 2.0 protected resource metadata (RFC 9728) that Spring Security serves does not yet
+name the authorization server.
+** The gateway has no rate limiting and no CORS configuration; there is no browser client yet.
+
+== Alternatives considered
+
+* *Authorization at the gateway.* One place to look, but a second copy of every rule, matched on
+path strings: the cause of the old bypasses. Services behind it would trust anything that reaches
+them.
+* *Forwarding the user's token to other services.* Simple, but every service could then act as the
+user anywhere the token is valid, and downstream services could not tell a user from a service.
+If a downstream service ever needs the user's identity, token exchange (RFC 8693) issues a new,
+narrower token for that call.
+* *Opaque tokens with introspection.* Revocation takes effect at once, but the issuer is asked on
+every request and becomes part of every request's availability and latency.
+* *Mutual TLS between services.* Authenticates connections, not callers' permissions; worth adding
+with the deployment platform (service mesh), in addition to tokens.

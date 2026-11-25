@@ -1,0 +1,38 @@
+= An inbox that forgets too early
+:description: A consumer group's offsets are lost (they expire while the service is down, or someone resets them), and Kafka delivers everything still in the topic again.
+
+// Story to write in your own words. Keep the four sections; delete the NOTE block when done.
+
+== The scenario
+
+A consumer group's offsets are lost (they expire while the service is down, or someone resets them), and Kafka delivers everything still in the topic again.
+
+== What would go wrong
+
+// Without the fix: which services disagree, and what does a customer or the warehouse see?
+
+== The fix
+
+// What the system does now, and why this service is the one that decides.
+
+== How it is proven
+
+* `MessagingPropertiesTest`
+* `InboxIT` (expiry)
+* `MessagingTopicsTest`
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
+
+== When it happens in production
+
+See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts].
+
+Decision record: xref:adr/0005-transactional-outbox-and-inbox.adoc[ADR-0005].
+
+[NOTE]
+.Facts to build on (remove when the story is written)
+====
+* The inbox recognises a redelivered event only while it remembers the event id.
+* Fix: topics keep events 7 days, set explicitly; the inbox keeps ids 30 days; a service whose inbox retention is not longer than its topic retention does not start.
+* Expired ids are deleted hourly, in batches.
+====

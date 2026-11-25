@@ -1,0 +1,95 @@
+= API reference
+:description: Every endpoint, who may call it, and what it answers.
+
+All calls go through the gateway, `http://localhost:8080/api/v1/...`, with a Keycloak access token in
+`Authorization: Bearer ...` (except public catalog reads). Errors are RFC 9457 problem responses
+(`application/problem+json`): 400 invalid input, 401 missing or invalid token, 403 role missing,
+404 unknown (or someone else's), 409 conflict with the current state, 422 business rule, 503 a
+dependency is down (retry with the same idempotency key).
+
+== catalog-service API
+
+[cols="1,4,6",options="header"]
+|===
+|Method |Path |Purpose
+|`POST` |`/api/v1/products` |Create a product (with an empty stock row)
+|`GET` |`+/api/v1/products/{sku}+` |One product (public)
+|`GET` |`/api/v1/products?sku=A&sku=B` |Current prices for the given SKUs; all products without `sku` (public)
+|`PUT` |`+/api/v1/products/{sku}/price+` |Change a price
+|`POST` |`+/api/v1/products/{sku}/deactivate+` |Take off sale: new orders are refused, placed ones complete
+|`POST` |`+/api/v1/stock/{sku}/receipts+` |Goods receipt, idempotent by `referenceId`
+|`GET` |`+/api/v1/stock/{sku}+` |`onHand`, `reserved`, `available`
+|`PUT` |`+/api/v1/reservations/{orderId}+` |Reserve all order lines or none; idempotent by order id, never again after a release
+|`POST` |`+/api/v1/reservations/{orderId}/commit+` |Order shipped: reserved units leave stock
+|`POST` |`+/api/v1/reservations/{orderId}/release+` |Order cancelled: reserved units become available
+|===
+
+Every stock change is published as a `catalog.stock-changed` event on topic `catalog.stock`
+(key: SKU), recorded in the same transaction as the change.
+
+
+Access: reading products is public; every other endpoint requires the `admin` role. Calls carry a
+Keycloak access token (`Authorization: Bearer …`) whose `aud` includes `catalog-service`; see
+xref:operations:keycloak.adoc[Keycloak realm and clients] and `scripts/dev-auth.sh`.
+
+== customer-service API
+
+[cols="1,4,2,6",options="header"]
+|===
+|Method |Path |Who |Purpose
+|`POST` |`/api/v1/customers/me` |customer |Create the caller's profile (id and email come from the token)
+|`GET` |`/api/v1/customers/me` |customer |The caller's profile
+|`PUT` |`/api/v1/customers/me/shipping-address` |customer |Change the caller's shipping address
+|`GET` |`+/api/v1/customers/{id}+` |admin, service |Any profile (order-service checks customers here)
+|`POST` |`+/api/v1/customers/{id}/deactivate+` |admin |Deactivate a customer
+|===
+
+A customer's id is their Keycloak user id (`sub`), so there is no mapping table between logins and
+customers.
+
+== order-service API
+
+[cols="1,4,2,6",options="header"]
+|===
+|Method |Path |Who |Purpose
+|`POST` |`/api/v1/orders` |customer |Place an order for the caller; requires an `Idempotency-Key` header (UUID per order attempt)
+|`GET` |`+/api/v1/orders/{orderId}+` |owner, admin |One order with its lines and prices
+|`GET` |`/api/v1/orders` |customer |The caller's orders, newest first (admin: `?customerId=…` for anyone's)
+|`POST` |`+/api/v1/orders/{orderId}/cancel+` |owner, admin |Cancel: `200` if not confirmed yet; `202` for a confirmed order, while shipping decides; `409` once shipped
+|===
+
+The customer of an order is always the caller. Someone else's order answers `404`, like an unknown id,
+so order ids cannot be probed. order-service calls customer-service and catalog-service with its own
+client-credentials token, not the caller's.
+
+Placing an order reads the customer and current prices synchronously (2 s connect / 3 s read timeouts),
+then stores the order and an `order.order-placed` event in one transaction. Repeating a request with the
+same key returns the same order (`200`, `Idempotent-Replayed: true`); the same key with a different body
+is a `409`. Unknown or retired products and inactive customers give `422`; an unavailable dependency gives
+`503` with `Retry-After`, and the request can be retried safely with the same key.
+
+== shipping-service API
+
+[cols="1,4,2,6",options="header"]
+|===
+|Method |Path |Who |Purpose
+|`GET` |`+/api/v1/shipments/{shipmentId}+` |admin |One shipment with its lines and tracking number
+|`GET` |`/api/v1/shipments?orderId=…` |admin |The shipment of an order
+|`POST` |`+/api/v1/shipments/{shipmentId}/dispatch+` |admin |Hand over to the carrier: assigns the tracking number, commits the stock
+|`POST` |`+/api/v1/shipments/{shipmentId}/deliver+` |admin |Mark as delivered
+|===
+
+Shipments are created from `order.order-confirmed` events, not through the API. Customers cannot see
+their shipment yet; exposing the tracking number on the order is on the roadmap.
+
+== Request bodies
+
+[source,json]
+----
+POST /api/v1/products                       {"sku": "KB-01", "name": "Keyboard", "unitPrice": 89.90, "currency": "EUR"}
+POST /api/v1/stock/KB-01/receipts           {"referenceId": "<uuid>", "quantity": 10}
+POST /api/v1/customers/me                   {"fullName": "Alice Example", "shippingAddress": "Bağdat Cd. 1, İstanbul"}
+PUT  /api/v1/customers/me/shipping-address  {"shippingAddress": "..."}
+POST /api/v1/orders                         {"lines": [{"sku": "KB-01", "quantity": 2}], "shippingAddress": "optional, defaults to the profile's"}
+POST /api/v1/orders/{id}/cancel             {"reason": "changed my mind"}
+----

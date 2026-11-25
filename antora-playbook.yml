@@ -1,0 +1,37 @@
+site:
+  title: FF E-Commerce
+  url: https://ffetih.github.io/ff-ecommerce-docs
+  start_page: ff-ecommerce::index.adoc
+
+content:
+  sources:
+  - url: .
+    branches: HEAD
+    start_path: docs
+    edit_url: 'https://github.com/ffetih/ff-ecommerce-docs/edit/main/{path}'
+
+asciidoc:
+  attributes:
+    # Diagrams are rendered by kroki.io when the page is viewed; the source stays in the page.
+    kroki-server-url: https://kroki.io
+    kroki-fetch-diagram: false
+    page-pagination: ''
+    experimental: ''
+    hide-uri-scheme: ''
+    code-repo: https://github.com/ffetih/ff-ecommerce
+    code-tree: https://github.com/ffetih/ff-ecommerce/blob/main
+  extensions:
+  - asciidoctor-kroki
+
+antora:
+  extensions:
+  - require: '@antora/lunr-extension'
+
+ui:
+  bundle:
+    url: https://gitlab.com/antora/antora-ui-default/-/jobs/artifacts/HEAD/raw/build/ui-bundle.zip?job=bundle-stable
+    snapshot: true
+  supplemental_files: ./supplemental-ui
+
+output:
+  dir: ./build/site

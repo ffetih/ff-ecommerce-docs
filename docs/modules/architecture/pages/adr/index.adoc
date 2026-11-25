@@ -1,0 +1,42 @@
+= Decisions (ADRs)
+:description: Architecture decision records: what was decided, why, and what it costs.
+
+Each significant decision is recorded with its context, the decision, its consequences, and the
+alternatives that were rejected. New records follow the xref:adr/0000-template.adoc[template].
+
+[cols="1,4,1"]
+|===
+|ADR |Decision |Status
+
+|xref:adr/0001-hexagonal-architecture.adoc[ADR-0001]
+|Hexagonal architecture inside each service
+|Accepted
+
+|xref:adr/0002-database-per-service.adoc[ADR-0002]
+|Database per service on a shared local PostgreSQL instance
+|Accepted
+
+|xref:adr/0003-catalog-and-inventory-in-one-service.adoc[ADR-0003]
+|Catalog and inventory in one service
+|Accepted
+
+|xref:adr/0004-explicit-transaction-boundaries.adoc[ADR-0004]
+|Explicit transaction boundaries in application services
+|Accepted
+
+|xref:adr/0005-transactional-outbox-and-inbox.adoc[ADR-0005]
+|Transactional outbox with ordered relay, and consumer inbox
+|Accepted
+
+|xref:adr/0006-event-format.adoc[ADR-0006]
+|Event format and contracts
+|Accepted
+
+|xref:adr/0007-order-saga.adoc[ADR-0007]
+|Order fulfilment as a choreographed saga
+|Accepted
+
+|xref:adr/0008-security.adoc[ADR-0008]
+|Security: every service checks tokens itself, the gateway only routes
+|Accepted
+|===

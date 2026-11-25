@@ -1,0 +1,113 @@
+= FF E-Commerce
+:description: An order-to-delivery flow across independent services, built to stay consistent when messages arrive late, twice, or not at all.
+:page-role: home
+
+An order-to-delivery flow built as independent services: catalog and inventory, customers, orders and
+shipping, each with its own database, talking through Kafka. The focus is on the hard parts of
+distributed systems rather than on feature count.
+
+== The question
+
+When stock lives in one database, orders in another and parcels in a third, *what keeps them from
+disagreeing?* There is no transaction across them. A message can be delivered twice, late, or end in
+a dead-letter topic; a customer can cancel at the very moment the warehouse ships.
+
+Think of three shops on one street, each with its own ledger, passing notes to each other. The notes
+sometimes arrive twice, sometimes late, sometimes get lost in a drawer. The system works if every
+shop keeps a list of notes it has already handled, never acts on a note that contradicts what it
+already knows, and someone checks the drawer.
+
+The answer here is a choreographed saga on top of a transactional outbox and an idempotent inbox,
+with one service owning each decision that cannot be undone.
+
+== Seven failure stories
+
+Each rule exists because of one concrete way the system could end up wrong:
+
+[cols="2,3"]
+|===
+|Story |Without the rule
+
+|xref:architecture:consistency/cancel-dispatch-race.adoc[A cancellation racing a dispatch]
+|cancelled order, released stock, parcel on its way
+
+|xref:architecture:consistency/delivery-without-dispatch.adoc[A delivery without a dispatch]
+|"delivered" order whose stock was never committed
+
+|xref:architecture:consistency/stuck-orders.adoc[Orders that stop moving]
+|stock held forever behind one dead letter
+
+|xref:architecture:consistency/silent-failures.adoc[Failures nobody sees]
+|all of the above, unnoticed
+
+|xref:architecture:consistency/replayed-order-placed.adoc[A replayed order-placed]
+|"reserved" for stock nobody holds
+
+|xref:architecture:consistency/replayed-order-confirmed.adoc[A replayed order-confirmed]
+|a parcel for a cancelled order
+
+|xref:architecture:consistency/inbox-forgets.adoc[An inbox that forgets too early]
+|events processed twice after an offset reset
+|===
+
+== Engineering scope
+
+[cols="1,3"]
+|===
+|Area |What is built
+
+|Consistency
+|Concurrency-safe stock reservations; transactional outbox with ordered relay; idempotent inbox;
+choreographed saga with compensation; cancellation decided by the owner of the point of no return;
+order expiry.
+
+|Security
+|Keycloak; every service an OAuth2 resource server with audience checks and enforced
+deny-by-default; identity and ownership from the token; service-to-service client credentials.
+
+|Operability
+|Dead-letter topics; outbox lag and dead-letter metrics; retention rules that keep idempotency intact.
+
+|Proof
+|Integration tests against real PostgreSQL and Kafka (Testcontainers) and end-to-end tests of the
+packaged services, including races repeated many times.
+|===
+
+== Technology
+
+[cols="1,3"]
+|===
+|Layer |Tools
+
+|Language and framework |Java 25, Spring Boot 4.2, Spring Security 7, Spring Cloud Gateway (Server WebMVC)
+|Data |PostgreSQL 17, Flyway, Hibernate 7
+|Messaging |Apache Kafka 4 (KRaft)
+|Identity |Keycloak 26
+|Tests |JUnit 5, AssertJ, Testcontainers
+|Docs |Antora, AsciiDoc, Kroki
+|===
+
+== Start by your role
+
+[cols="1,3"]
+|===
+|Role |Reading path
+
+|xref:architecture:index.adoc[*Architect*]
+|xref:architecture:index.adoc[Overview] → xref:architecture:saga.adoc[the saga] →
+xref:architecture:consistency/index.adoc[failure stories] → xref:architecture:adr/index.adoc[decisions]
+
+|xref:business:index.adoc[*Business analyst*]
+|xref:business:order-lifecycle.adoc[Order lifecycle] → xref:business:domain-rules.adoc[domain rules] →
+xref:business:glossary.adoc[glossary]
+
+|xref:developer:index.adoc[*Developer*]
+|xref:developer:local-run.adoc[Local run] → xref:developer:try-it/order-to-delivery.adoc[try an order] →
+xref:developer:api.adoc[API] → xref:developer:try-it/failure-drills.adoc[failure drills]
+
+|xref:operations:index.adoc[*Operations*]
+|xref:operations:metrics.adoc[Metrics and alerts] → xref:operations:dead-letters.adoc[dead-letter runbook] →
+xref:operations:configuration.adoc[configuration]
+|===
+
+Where the project stands: xref:roadmap.adoc[sprints and roadmap].

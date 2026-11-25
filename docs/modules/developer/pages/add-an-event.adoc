@@ -1,0 +1,66 @@
+= Recipe: add an event and a consumer
+:description: Five steps that keep the outbox, ordering and idempotency guarantees when the saga grows.
+
+== 1. Define the event in `events`
+
+A record with its topic, type and version. Key the topic by the id whose events must stay in order
+(for the saga: the order id).
+
+[source,java]
+----
+public record ShipmentDelayed(UUID shipmentId, UUID orderId, String reason) {
+    public static final String TYPE = "shipping.shipment-delayed";
+    public static final int VERSION = 1;
+}
+----
+
+== 2. Publish through the outbox, inside the business transaction
+
+The application calls an event port; its adapter appends to the outbox. The event is stored with the
+change and relayed afterwards, so a rolled-back change publishes nothing.
+
+[source,java]
+----
+outbox.append(ShipmentDispatched.TOPIC, shipment.orderId().toString(),
+        ShipmentDelayed.TYPE, ShipmentDelayed.VERSION,
+        new ShipmentDelayed(shipment.id(), shipment.orderId(), reason));
+----
+
+== 3. Declare the topic
+
+Every service declares what it writes and reads; a topic that is read gets its dead-letter topic
+automatically, both with the configured retention.
+
+[source,java]
+----
+topics.declare(Topics.PARTITIONS,
+        List.of(ShipmentDispatched.TOPIC),       // written
+        List.of(OrderPlaced.TOPIC));             // read, with dead letters
+----
+
+== 4. Consume idempotently
+
+One listener per topic, its consumer group named like its inbox consumer. The application method
+records the event id first and returns if it has seen it.
+
+[source,java]
+----
+public void shipmentDelayed(UUID eventId, UUID orderId, String reason) {
+    transactions.inTransaction(() -> {
+        if (!processedEvents.firstDelivery(SHIPMENT_EVENTS_CONSUMER, eventId)) {
+            return null;                       // redelivery: already handled
+        }
+        // apply the change; a business refusal becomes an event, not an exception
+        return null;
+    });
+}
+----
+
+* *Business failures are results:* publish a failure event in the same transaction and commit.
+* *Technical failures throw:* the transaction rolls back, the record is retried, then dead-lettered.
+* *Late or repeated events* must not move state backwards; let the domain ignore steps it has passed.
+
+== 5. Prove it
+
+An integration test that publishes the envelope to Kafka and asserts on the database and on the
+replies, including the same event twice and the event arriving in the wrong state.
