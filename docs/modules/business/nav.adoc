@@ -1,5 +1,6 @@
 .Business (BA)
 * xref:index.adoc[Business guide]
+* xref:domain-model.adoc[Domain model: contexts and language]
 * xref:order-lifecycle.adoc[Order lifecycle]
 * xref:domain-rules.adoc[Domain rules]
 * xref:glossary.adoc[Glossary]

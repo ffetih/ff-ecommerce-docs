@@ -2,7 +2,9 @@
 :description: One meaning for each word used across the services.
 
 [glossary]
+Aggregate (DDD):: A cluster of objects changed as one unit through one root, so its rules hold after every change. For example an order with its lines.
 Back office:: Staff with the `admin` role: catalog, stock, shipments, any order.
+Bounded context (DDD):: A part of the business with its own model, where every word has one meaning. Here: ordering, catalog & inventory, shipping, customer, identity.
 Cancellation request:: A customer's or the system's wish to cancel a confirmed order; the warehouse (shipping) decides.
 Commit (stock):: Reserved units leave the warehouse when the parcel is handed to the carrier.
 Compensation:: The step that undoes an earlier step when a later one fails, for example releasing stock when an order is cancelled.
@@ -11,9 +13,11 @@ Dispatch:: Handing the parcel to the carrier. The point of no return: afterwards
 Event:: A message announcing something that has happened, for example `order-placed`.
 Goods receipt:: Units arriving at the warehouse, added to stock.
 Idempotency key:: A unique value the client sends with an order request, so a repeated request does not create a second order.
+Invariant (DDD):: A rule that must always hold, for example "reserved units never exceed units on hand".
 Order expiry:: Automatic cancellation of orders that stopped moving.
 Release (stock):: Reserved units become available again because the order was cancelled.
 Reservation:: Units set aside for one order; all lines or none.
 Saga:: A business process across several services, each doing its part in its own transaction and announcing it.
 Shipment:: The parcel for one confirmed order.
 SKU:: Stock keeping unit: the product code.
+Ubiquitous language (DDD):: The words a context uses, the same in conversation, documents and code.

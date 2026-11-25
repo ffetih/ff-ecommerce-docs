@@ -1,0 +1,97 @@
+= Aggregates and invariants
+:description: How each context protects its rules in code: aggregates, value objects, and where an invariant lives.
+
+An *aggregate* is a cluster of objects changed as one unit, through one root, so that its rules
+(*invariants*) hold after every change. In this codebase every aggregate is an immutable Java
+`record`: a change returns a new instance, the constructor rejects any state that breaks a rule,
+and repeating a step the aggregate has already taken returns it unchanged.
+
+The language each context uses is described in
+xref:business:domain-model.adoc[domain model: contexts and language].
+
+== Ordering (order-service)
+
+[cols="1,3"]
+|===
+|Element |Rules it enforces
+
+|`Order` (aggregate root)
+|The total is computed from the lines, never accepted from the client. At most 50 lines; one
+currency; every SKU once; shipping address required, at most 500 characters. Status only moves
+forward: `cancel` only from PLACED, `requestCancellation` only from CONFIRMED, `deliver` only from
+SHIPPED. An impossible step throws `IllegalOrderTransitionException`.
+
+|`OrderLine` (value object)
+|SKU, quantity, the unit price frozen at placing, line total.
+
+|`Money`, `Sku` (value objects)
+|Amounts with currency and scale; SKU format. Ordering's own copies, not shared with catalog.
+|===
+
+== Catalog & inventory (catalog-service)
+
+[cols="1,3"]
+|===
+|Element |Rules it enforces
+
+|`Product`
+|Name required. Its current price is the only price an order may use. `deactivate` takes it off sale.
+
+|`StockItem` (one per SKU)
+|`0 <= reserved <= onHand`; `available = onHand - reserved`. Reserving more than is available throws
+`InsufficientStockException`.
+
+|`Reservation` (per order)
+|All lines or none; at least one line; every SKU once. `RESERVED -> COMMITTED` (shipped) or
+`RESERVED -> RELEASED` (cancelled); a committed reservation cannot be released, a released one
+cannot be committed.
+
+|`StockReceipt`
+|A goods receipt, idempotent by its reference id: a retry adds no stock.
+|===
+
+*A deliberate boundary choice.* `Reservation` and `StockItem` are separate aggregates, yet one
+reservation changes several stock items. Inside one service with one database this is done in one
+transaction, with the stock rows locked in SKU order to avoid deadlocks. Between services the same
+problem is solved with a saga; inside a context, a local transaction is simpler and safe.
+
+*Where a rule spans aggregates.* "A released reservation is never reserved again" needs the
+reservation and the request together, so it lives in the application service
+(`ReservationService`), not in one aggregate.
+
+== Shipping (shipping-service)
+
+[cols="1,3"]
+|===
+|Element |Rules it enforces
+
+|`Shipment` (aggregate root)
+|`CREATED -> DISPATCHED -> DELIVERED`, or `CREATED -> CANCELLED`. Dispatch is the point of no return:
+a dispatched shipment cannot be cancelled, and has a tracking number. Versioned, so a dispatch and a
+cancellation of the same shipment cannot both commit.
+
+|One shipment per order
+|Enforced by the database (unique `order_id`), whatever happens to the events that create it.
+|===
+
+== Customer (customer-service)
+
+[cols="1,3"]
+|===
+|Element |Rules it enforces
+
+|`Customer` (aggregate root)
+|Name and address required, with length limits. A deactivated customer cannot change the address
+and cannot order; deactivating twice changes nothing.
+
+|`Email` (value object)
+|Stored normalized: trimmed, lower case with a locale-independent rule (a Turkish default locale would
+otherwise turn `I` into a dotless `ı`). Unique across customers.
+|===
+
+== Domain events
+
+Aggregates do not publish anything themselves. The application service that changed an aggregate
+announces the change through an event port, inside the same transaction; the outbox then relays it
+(xref:adr/0005-transactional-outbox-and-inbox.adoc[ADR-0005]). The event types live in the shared
+`events` module, the published language between contexts.

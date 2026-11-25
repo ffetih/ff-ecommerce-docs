@@ -13,6 +13,9 @@ xref:architecture:index.adoc[architecture] and xref:developer:index.adoc[develop
 |===
 |Page |Answers
 
+|xref:domain-model.adoc[Domain model]
+|The parts of the business, the words each uses, and how they relate.
+
 |xref:order-lifecycle.adoc[Order lifecycle]
 |Which states an order goes through, and what a customer sees in each.
 

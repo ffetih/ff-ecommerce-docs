@@ -1,6 +1,7 @@
 .Architecture (Architect)
 * xref:index.adoc[Architecture overview]
 * xref:saga.adoc[The order saga]
+* xref:aggregates.adoc[Aggregates and invariants]
 * xref:consistency/index.adoc[Consistency: seven failure stories]
 ** xref:consistency/cancel-dispatch-race.adoc[A cancellation racing a dispatch]
 ** xref:consistency/delivery-without-dispatch.adoc[A delivery without a dispatch]

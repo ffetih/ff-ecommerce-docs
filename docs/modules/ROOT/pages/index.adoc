@@ -98,7 +98,7 @@ packaged services, including races repeated many times.
 xref:architecture:consistency/index.adoc[failure stories] → xref:architecture:adr/index.adoc[decisions]
 
 |xref:business:index.adoc[*Business analyst*]
-|xref:business:order-lifecycle.adoc[Order lifecycle] → xref:business:domain-rules.adoc[domain rules] →
+|xref:business:domain-model.adoc[Domain model] → xref:business:order-lifecycle.adoc[order lifecycle] → xref:business:domain-rules.adoc[domain rules] →
 xref:business:glossary.adoc[glossary]
 
 |xref:developer:index.adoc[*Developer*]

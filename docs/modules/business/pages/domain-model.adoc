@@ -1,0 +1,122 @@
+= Domain model: contexts and language
+:description: The bounded contexts of the shop, the words each one uses, and how they relate.
+
+The shop is not one model but five, each with its own words and rules. Domain-driven design calls
+them *bounded contexts*: inside one, every word has exactly one meaning; between them, the same word
+may mean different things, and the boundary is where one meaning is translated into the other.
+
+== Bounded contexts
+
+[cols="1,1,1,3"]
+|===
+|Context |Service |Kind |Responsible for
+
+|Ordering |order-service |core
+|What the customer bought, at which prices, and where the order stands. The heart of the business.
+
+|Catalog & inventory |catalog-service |core
+|What can be sold, at which price, and how many units are free, promised or gone. Kept together on
+purpose: a reservation must check price, availability and status in one place
+(xref:architecture:adr/0003-catalog-and-inventory-in-one-service.adoc[ADR-0003]).
+
+|Shipping |shipping-service |supporting
+|The parcel: preparing, handing over to the carrier, delivery. Owns the point of no return.
+
+|Customer |customer-service |supporting
+|Who the shop delivers to: name, shipping address, whether the customer may still order.
+
+|Identity |Keycloak |generic
+|Who someone is and what they may do. Bought, not built: login is not where this shop differs.
+|===
+
+*Core* contexts are where the business competes and where the effort goes; *supporting* ones are
+needed but ordinary; *generic* ones are taken off the shelf.
+
+== Context map
+
+[graphviz,context-map,svg]
+----
+digraph context_map {
+  rankdir=TB; nodesep=0.9; ranksep=0.75; fontname="Helvetica"; newrank=true;
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, margin="0.18,0.1"];
+  edge [color="#555555", fontname="Helvetica", fontsize=9, arrowsize=0.7];
+
+  identity [label="Identity\nKeycloak · generic", fillcolor="#f4f4f4", color="#888888"];
+  customer [label="Customer\ncustomer-service · supporting", fillcolor="#eef3fb", color="#4a7fb5"];
+  ordering [label="Ordering\norder-service · core", fillcolor="#fdf1e3", color="#c98a3c", penwidth=1.5];
+  inventory [label="Catalog & inventory\ncatalog-service · core", fillcolor="#fdf1e3", color="#c98a3c", penwidth=1.5];
+  shipping [label="Shipping\nshipping-service · supporting", fillcolor="#eef3fb", color="#4a7fb5"];
+
+  { rank=same; customer; inventory; }
+
+  identity -> customer [label=" conformist:\n user id = customer id"];
+  identity -> ordering [label=" conformist:\n customer from token"];
+  customer -> ordering [label=" sync, ACL:\n CustomerSnapshot"];
+  inventory -> ordering [label=" sync, ACL:\n ProductPrice"];
+  ordering -> shipping [dir=both, style=dashed, label=" events"];
+  ordering -> inventory [dir=both, style=dashed, label=" events", constraint=false];
+  shipping -> inventory [style=dashed, label=" events"];
+}
+----
+
+[cols="1,3"]
+|===
+|Relationship |Meaning here
+
+|Conformist
+|Ordering and Customer accept Identity's model as it is: the Keycloak user id *is* the customer id.
+No mapping table.
+
+|Customer/supplier, synchronous, with an anticorruption layer
+|Ordering asks Customer and Catalog while placing an order, and translates their answers into its
+own small types (`CustomerSnapshot`, `ProductPrice`). Their full models never leak into Ordering.
+
+|Published language (events)
+|Everything after placing travels as events defined in one shared module (`events`), the only
+shared code between contexts. Each consumer reads only what it needs.
+|===
+
+== Ubiquitous language: one word, several meanings
+
+The same word means something different in each context. Inside a context, use its meaning
+exactly; across contexts, say which one you mean.
+
+[cols="1,2,2,2"]
+|===
+|Word |Ordering |Catalog & inventory |Shipping
+
+|*order*
+|the customer's purchase: lines, frozen prices, total, status
+|only an id: the key of a reservation
+|only an id: the key of a shipment
+
+|*price*
+|the unit price *at the moment of placing*, frozen in the order line
+|the *current* unit price of a product; may change any time
+|not known
+
+|*cancel*
+|PLACED: cancel at once. CONFIRMED: *request* cancellation
+|*release* the reservation: units become available again
+|*cancel the shipment*, only before dispatch
+
+|*customer*
+|a snapshot taken when placing: id, active, address
+|not known
+|an id and a delivery address on the parcel
+
+|*product / line*
+|SKU, quantity, frozen unit price, line total
+|SKU, name, current price, active; stock per SKU
+|SKU and quantity to pack
+|===
+
+Two more distinctions the language keeps sharp:
+
+* *Reserved* vs *committed* stock: reserved units are promised but still in the warehouse; committed
+  units have left with the parcel.
+* *Deactivated customer* (Customer: may not order) vs *disabled user* (Identity: may not log in):
+  two decisions in two contexts.
+
+The definitions of every term are in the xref:glossary.adoc[glossary]. How the code protects each
+context's rules: xref:architecture:aggregates.adoc[aggregates and invariants].
