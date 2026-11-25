@@ -7,38 +7,40 @@ step is built so that a message arriving late, twice, or not at all leaves the s
 
 == The running system
 
-[plantuml,system-context,svg]
+[graphviz,system-context,svg]
 ----
-@startuml
-skinparam componentStyle rectangle
-skinparam shadowing false
-skinparam defaultFontName sans-serif
+digraph context {
+  rankdir=TB; nodesep=0.35; ranksep=0.55; fontname="Helvetica"; newrank=true;
+  node [shape=box, style="rounded,filled", fillcolor="#f4f4f4", color="#888888", fontname="Helvetica", fontsize=11, margin="0.15,0.08"];
+  edge [color="#555555", fontname="Helvetica", fontsize=10, arrowsize=0.7];
 
-actor "Customer /\nback office" as user
-node "Keycloak\n(ecommerce realm)" as kc
-component "gateway\n:8080" as gw
+  user [label="Customer / back office", fillcolor="#ffffff"];
+  kc [label="Keycloak\necommerce realm", fillcolor="#fdf1e3", color="#c98a3c"];
+  gw [label="gateway :8080\nroutes only"];
 
-package "Services (one database each)" {
-  component "catalog-service\n:8081" as cat
-  component "customer-service\n:8082" as cus
-  component "order-service\n:8083" as ord
-  component "shipping-service\n:8084" as shp
+  subgraph cluster_services {
+    label="Services, one database each"; labeljust=l; style="rounded,dashed"; color="#999999"; fontsize=11;
+    cus [label="customer-service\n:8082"];
+    ord [label="order-service\n:8083"];
+    cat [label="catalog-service\n:8081"];
+    shp [label="shipping-service\n:8084"];
+  }
+
+  kafka [label="Kafka\norder.lifecycle · catalog.reservations · shipping.shipments · catalog.stock", shape=box, fillcolor="#e7f0fa", color="#4a7fb5"];
+
+  { rank=same; user; kc; }
+  { rank=same; cus; ord; cat; shp; }
+  cus -> ord -> cat -> shp [style=invis];
+
+  user -> kc [label=" log in"];
+  user -> gw [label=" HTTPS + token"];
+  gw -> cus; gw -> ord; gw -> cat; gw -> shp;
+  ord -> cus [style=dashed, label="profile", constraint=false];
+  ord -> cat [style=dashed, label="prices", constraint=false];
+  ord -> kafka [dir=both, label=" events"];
+  cat -> kafka [dir=both];
+  shp -> kafka [dir=both];
 }
-
-queue "Kafka\norder.lifecycle\ncatalog.reservations\nshipping.shipments\ncatalog.stock" as kafka
-
-user --> kc : log in
-user --> gw : HTTPS + token
-gw --> cat
-gw --> cus
-gw --> ord
-gw --> shp
-ord ..> cus : profile (machine token)
-ord ..> cat : prices (machine token)
-cat <--> kafka
-ord <--> kafka
-shp <--> kafka
-@enduml
 ----
 
 * *Synchronous calls* only where an answer is needed before anything is stored: placing an order

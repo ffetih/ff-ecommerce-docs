@@ -7,24 +7,28 @@ does its part in a local transaction and announces it with an event; the others 
 
 == Order states
 
-[plantuml,order-states,svg]
+[graphviz,order-states,svg]
 ----
-@startuml
-hide empty description
-skinparam shadowing false
-skinparam defaultFontName sans-serif
+digraph order_states {
+  rankdir=LR; nodesep=0.45; ranksep=0.7; fontname="Helvetica";
+  node [shape=box, style="rounded,filled", fillcolor="#f4f4f4", color="#888888", fontname="Helvetica", fontsize=11, margin="0.15,0.08"];
+  edge [color="#555555", fontname="Helvetica", fontsize=9, arrowsize=0.7];
 
-[*] --> PLACED : customer places order
-PLACED --> CONFIRMED : stock-reserved
-PLACED --> CANCELLED : reservation-failed,\ncustomer cancels,\nnot confirmed in 30 min
-CONFIRMED --> SHIPPED : shipment-dispatched
-CONFIRMED --> CANCELLATION_REQUESTED : customer cancels,\nnot dispatched in 3 days
-CANCELLATION_REQUESTED --> CANCELLED : shipment-cancelled
-CANCELLATION_REQUESTED --> SHIPPED : shipment-dispatched\n(dispatch came first)
-SHIPPED --> DELIVERED : shipment-delivered
-CANCELLED --> [*]
-DELIVERED --> [*]
-@enduml
+  start [shape=circle, label="", width=0.18, style=filled, fillcolor="#555555"];
+  PLACED; CONFIRMED; SHIPPED; DELIVERED [fillcolor="#e6f2e6", color="#5a9a5a"];
+  CANCELLATION_REQUESTED [label="CANCELLATION\nREQUESTED", fillcolor="#fdf1e3", color="#c98a3c"];
+  CANCELLED [fillcolor="#fbe9e7", color="#c0634f"];
+
+
+  start -> PLACED [label=" placed"];
+  PLACED -> CONFIRMED [label="stock-reserved"];
+  CONFIRMED -> SHIPPED [label="shipment-dispatched"];
+  SHIPPED -> DELIVERED [label="shipment-delivered"];
+  CONFIRMED -> CANCELLATION_REQUESTED [label="customer cancels\nnot dispatched in 3 days"];
+  CANCELLATION_REQUESTED -> CANCELLED [label="shipment-cancelled"];
+  CANCELLATION_REQUESTED -> SHIPPED [label="shipment-dispatched\n(dispatch came first)"];
+  PLACED -> CANCELLED [label="reservation-failed\ncustomer cancels\nnot confirmed in 30 min"];
+}
 ----
 
 The order only moves forward. A step it has already passed is ignored, so a late or repeated event
