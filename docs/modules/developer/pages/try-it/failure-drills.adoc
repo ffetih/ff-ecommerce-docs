@@ -1,8 +1,40 @@
 = Try it: failure drills
-:description: Remove one safeguard at a time, run the test that proves it, and read why it fails.
+:description: Watch each safeguard work on the running system, or remove it and watch its test fail.
 
-Each drill takes a safeguard away on a throwaway branch and runs the test that proves it. The red
-output shows exactly what the safeguard prevents. Afterwards, discard the change.
+Each xref:architecture:consistency/index.adoc[failure story] can be tried in up to two ways:
+
+* *Live:* provoke the situation on the running system and watch what it does.
+* *Break it:* remove the safeguard on a throwaway branch and run the test that proves it; the red
+  output shows exactly what the safeguard prevents.
+
+What the results mean is explained on each story's page.
+
+== Setup, once per terminal
+
+The whole system running (xref:local-run.adoc[local run]), plus Kafka UI
+(`docker compose --profile tools up -d`, http://localhost:8090). From the code repository:
+
+[source,bash]
+----
+source scripts/drills.sh     # loads the helpers below
+drill_setup                  # tokens, a product with 10 units in $SKU, bob's profile
+----
+
+[cols="1,3"]
+|===
+|Helper |Does
+
+|`fresh` |New tokens for `$ADMIN` and `$BOB`; they live 15 minutes, so run it again after a `401`.
+|`place` |Places one unit of `$SKU` as bob, waits for the saga, prints the order id.
+|`show <order>` |The order's status, its shipment's status (or `none`), and the stock.
+|`dl` |order-service's dead-letter counter, with its tags.
+|`send_event <topic> <key> <type> <data>` |Publishes an event as if a service had sent it.
+|`race [delay]` |One round of the cancellation race (drill 1).
+|===
+
+The helpers are in {code-tree}/scripts/drills.sh[`scripts/drills.sh`].
+
+To throw away a *Break it* change afterwards:
 
 [source,bash]
 ----
@@ -11,34 +43,94 @@ git switch -c lab/<drill>
 git restore . && git switch - && git branch -D lab/<drill>
 ----
 
-== Replayed order-placed
+== 1. A cancellation racing a dispatch
 
-Story: xref:architecture:consistency/replayed-order-placed.adoc[A replayed order-placed].
+Story: xref:architecture:consistency/cancel-dispatch-race.adoc[A cancellation racing a dispatch].
 
-* *Change:* in `ReservationService.attemptReservation` (catalog), delete the `if (… RELEASED)` block.
-* *Run:* `./mvnw verify -pl catalog-service -Dit.test='SagaParticipationIT#aReplayedOrderPlaced*'`
-* *Expect:* the replies are `stock-reserved` twice instead of `stock-reserved` then
-  `stock-reservation-failed`: catalog claims stock it does not hold.
+=== Live
 
-== Replayed order-confirmed
+One round: a confirmed order, then the customer's cancellation and the warehouse's dispatch at once.
+The optional argument delays the dispatch.
 
-Story: xref:architecture:consistency/replayed-order-confirmed.adoc[A replayed order-confirmed].
+[source,bash]
+----
+race       # both at once
+race 2     # the dispatch two seconds later
+----
 
-* *Change:* in `ShippingService.orderConfirmed`, delete the `cancelledOrders.contains(orderId)` check.
-* *Run:* `./mvnw verify -pl shipping-service -Dit.test='ShippingSagaIT#aConfirmationReplayed*'`
-* *Expect:* a shipment exists for an order whose cancellation shipping had accepted.
+[cols="1,2,2"]
+|===
+|Run |Typical result |Why
 
-== Delivery without dispatch
+|`race`
+|cancel `202`, dispatch `200`; order `SHIPPED`, shipment `DISPATCHED`; `onHand` one lower, nothing reserved
+|The request reaches shipping through the outbox and Kafka (up to a second); the dispatch is a direct
+call. The parcel has left before the request arrives, so shipping answers `cancellation-refused`.
+
+|`race 2`
+|cancel `202`, dispatch `409`; order and shipment `CANCELLED`; stock available again
+|The request arrives first: shipping cancels the shipment, the order becomes `CANCELLED`, catalog
+releases the reservation, and the late dispatch is refused.
+|===
+
+Either way, order, shipment and stock agree. In Kafka UI, topic `shipping.shipments` filtered by the
+order id shows `shipment-dispatched` before `cancellation-refused` after a `race` round.
+
+=== The exact same moment
+
+Both reaching shipping in the same millisecond cannot be hit reliably by hand; the shipment's version
+lets only one commit. The test starts both behind one latch, 20 times:
+
+[source,bash]
+----
+./mvnw verify -pl shipping-service -Dit.test=CancellationRaceIT
+----
+
+== 2. A delivery without a dispatch
 
 Story: xref:architecture:consistency/delivery-without-dispatch.adoc[A delivery without a dispatch].
 
-* *Change:* in `Order.deliver`, let `CONFIRMED` through like `SHIPPED`.
+=== Live
+
+A confirmed order that was never dispatched, then a `shipment-delivered` for it, as if the dispatch
+event had been lost on the way:
+
+[source,bash]
+----
+fresh
+ORDER=$(place); show $ORDER; dl
+send_event shipping.shipments $ORDER shipping.shipment-delivered "{\"shipmentId\":\"$(uuid)\",\"orderId\":\"$ORDER\"}"
+sleep 5; show $ORDER; dl
+----
+
+[cols="1,2,2"]
+|===
+| |Before the event |After
+
+|order |`CONFIRMED` |`CONFIRMED`, unchanged
+|shipment |`CREATED` |`CREATED`: the parcel never left
+|stock |one unit reserved |still reserved, not committed
+|dead letters |no counter yet |`1`, `IllegalOrderTransitionException` on `shipping.shipments`
+|===
+
+order-service refuses to deliver an order that was never shipped: the event is retried three times,
+then moved to `shipping.shipments-dlt`, where Kafka UI shows it with its `kafka_dlt-exception-*`
+headers. All shipping events of an order share one topic and key, so they arrive in order: a
+delivery without its dispatch means the dispatch was dead-lettered itself, not that it is late.
+Both wait side by side in the dead-letter topic, to be replayed dispatch first
+(xref:operations:dead-letters.adoc[runbook]).
+
+=== Break it
+
+* *Change:* in `Order.deliver` (order-service), let `CONFIRMED` through like `SHIPPED`.
 * *Run:* `./mvnw verify -pl order-service -Dit.test=SagaReactionsIT` and `./mvnw test -pl order-service`
 * *Expect:* an order becomes `DELIVERED` although its stock was never committed.
 
-== Two expiry scanners
+== 3. Orders that stop moving
 
 Story: xref:architecture:consistency/stuck-orders.adoc[Orders that stop moving].
+
+=== Break it
 
 * *Change:* in `OrderJpaRepository.lockIfFree`, replace `FOR UPDATE SKIP LOCKED` with `FOR UPDATE`.
 * *Run:* `./mvnw verify -pl order-service -Dit.test=OrderExpiryIT`
@@ -46,45 +138,53 @@ Story: xref:architecture:consistency/stuck-orders.adoc[Orders that stop moving].
   status under the lock and finds the order already handled. `SKIP LOCKED` is about throughput; the
   re-check is what makes it correct. Now remove the re-check too and run again.
 
-== Inbox shorter than the topic
-
-Story: xref:architecture:consistency/inbox-forgets.adoc[An inbox that forgets too early].
-
-* *Change:* none in code. Start a service with `--ecommerce.messaging.inbox.retention=7d`.
-* *Expect:* it refuses to start, and the message explains which events would be processed twice.
-
-== A dead letter, live
+== 4. Failures nobody sees
 
 Story: xref:architecture:consistency/silent-failures.adoc[Failures nobody sees].
 
-* *Do:* with the stack running, send order-service something it cannot read:
-+
+=== Live
+
+Send order-service something it cannot read, and watch the counter:
+
 [source,bash]
 ----
-docker compose exec -it kafka /opt/kafka/bin/kafka-console-producer.sh \
-  --bootstrap-server localhost:9092 --topic shipping.shipments     # type a line, then Ctrl+C
-curl -s -H "Authorization: Bearer $(token admin)" \
-  localhost:8083/actuator/metrics/messaging.dead.letters | jq '{measurements, availableTags}'
+dl
+echo "not json" | docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 --topic shipping.shipments
+sleep 2; dl
 ----
-* *Expect:* the counter, tagged `topic=shipping.shipments` and `exception=MalformedEventException`;
-  the record in `shipping.shipments-dlt` in Kafka UI; the partition moved on.
 
-== The cancellation race, live
+The counter rises by one, tagged `topic=shipping.shipments` and `exception=MalformedEventException`;
+the record is in `shipping.shipments-dlt`, and the partition has moved on. An unreadable record
+skips the retries, because reading it again gives the same result.
 
-Story: xref:architecture:consistency/cancel-dispatch-race.adoc[A cancellation racing a dispatch].
+== 5. A replayed order-placed
 
-* *Do:* with a `CONFIRMED` order and its shipment id (see xref:try-it/order-to-delivery.adoc[]),
-  fire both at once:
-+
-[source,bash]
-----
-curl -s -o /dev/null -w 'cancel %{http_code}\n' -X POST $GW/orders/$ORDER/cancel \
-  -H "Authorization: Bearer $ALICE" -H "$J" -d '{"reason":"race"}' &
-curl -s -o /dev/null -w 'dispatch %{http_code}\n' -X POST $GW/shipments/$SHIP/dispatch \
-  -H "Authorization: Bearer $ADMIN" &
-wait; sleep 2
-curl -s $GW/orders/$ORDER -H "Authorization: Bearer $ALICE" | jq .status
-curl -s $GW/stock/$SKU -H "Authorization: Bearer $ADMIN" | jq
-----
-* *Expect:* either `CANCELLED` with the stock available again, or `SHIPPED` with the stock committed.
-  Never `CANCELLED` with the parcel gone. Repeat a few times; `CancellationRaceIT` does it 20 times.
+Story: xref:architecture:consistency/replayed-order-placed.adoc[A replayed order-placed].
+
+=== Break it
+
+* *Change:* in `ReservationService.attemptReservation` (catalog), delete the `if (… RELEASED)` block.
+* *Run:* `./mvnw verify -pl catalog-service -Dit.test='SagaParticipationIT#aReplayedOrderPlaced*'`
+* *Expect:* the replies are `stock-reserved` twice instead of `stock-reserved` then
+  `stock-reservation-failed`: catalog claims stock it does not hold.
+
+== 6. A replayed order-confirmed
+
+Story: xref:architecture:consistency/replayed-order-confirmed.adoc[A replayed order-confirmed].
+
+=== Break it
+
+* *Change:* in `ShippingService.orderConfirmed`, delete the `cancelledOrders.contains(orderId)` check.
+* *Run:* `./mvnw verify -pl shipping-service -Dit.test='ShippingSagaIT#aConfirmationReplayed*'`
+* *Expect:* a shipment exists for an order whose cancellation shipping had accepted.
+
+== 7. An inbox that forgets too early
+
+Story: xref:architecture:consistency/inbox-forgets.adoc[An inbox that forgets too early].
+
+=== Live
+
+Start any service with an inbox retention no longer than the topic retention, for example
+`./mvnw -pl order-service spring-boot:run -Dspring-boot.run.arguments=--ecommerce.messaging.inbox.retention=7d`.
+It refuses to start, and the message explains which events would be processed twice.
