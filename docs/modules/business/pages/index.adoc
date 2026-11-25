@@ -2,7 +2,11 @@
 :description: What the shop does for customers and the back office, in business terms.
 
 This part describes the shop as a business process: what a customer can do, what the back office
-does, and the rules that hold no matter which service is involved. Technical details are in the
+does, and the rules that hold no matter which service is involved.
+
+The shop is a *single seller*: one company sells its own goods. A marketplace, where many sellers
+offer products and are paid out separately, is out of scope for now and listed as an optional
+sprint on the xref:ROOT:roadmap.adoc[roadmap]. Technical details are in the
 xref:architecture:index.adoc[architecture] and xref:developer:index.adoc[developer] guides.
 
 [cols="1,3"]

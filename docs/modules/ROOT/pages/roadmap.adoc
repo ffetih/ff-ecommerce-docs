@@ -21,6 +21,7 @@ decisions are recorded as ADRs, *these docs are updated*, and the sprint is tagg
 |s09 |Returns |Concurrency-safe return limits; refunds through payments |planned
 |s10 |Observability |Distributed tracing, dashboards, alerts |planned
 |s11 |Packaging |Container images, one-command stack, Kubernetes manifests, Kafka authentication |planned
+|s12+ |Optional |Marketplace (sellers, orders split per seller, split payments and payouts); promotions; back-in-stock notifications |optional
 |===
 
 A web console (customer shop and back-office saga view) is built in parallel in a separate repository.
