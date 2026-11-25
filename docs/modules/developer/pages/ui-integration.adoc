@@ -36,12 +36,17 @@ the console exchanges for tokens (for example with `oidc-client-ts`).
 |Client |`shop` (public, standard flow, PKCE `S256`)
 |Redirect URI |`http://localhost:5173/*`
 |Web origins |`http://localhost:5173` (the browser calls Keycloak's token endpoint directly)
-|Audiences in the token |`catalog-service`, `customer-service`, `order-service`
+|Audiences in the token |all four services (roles, not audiences, separate customers from the back office)
 |Test users |`alice` / `alice`, `bob` / `bob`, `admin` / `admin`
 |===
 
-NOTE: The `shop` client is added to the realm with the console; until then, tokens from
-`scripts/dev-auth.sh` work for API experiments.
+[WARNING]
+====
+Do not log in with the `ecommerce-dev` client from the browser. It exists for scripts and tests
+only (password grant, deprecated), and it has no web origin: Keycloak rejects a token request that
+carries the console's `Origin` header with *Invalid origin*, even through the dev proxy, because the
+proxy forwards that header.
+====
 
 [IMPORTANT]
 ====
