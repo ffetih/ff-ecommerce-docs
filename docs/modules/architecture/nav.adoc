@@ -24,3 +24,4 @@
 ** xref:adr/0007-order-saga.adoc[ADR-0007: Order saga]
 ** xref:adr/0008-security.adoc[ADR-0008: Security]
 ** xref:adr/0009-payments-driven-by-order-service.adoc[ADR-0009: Payments]
+** xref:adr/0010-returns-in-order-service.adoc[ADR-0010: Returns]

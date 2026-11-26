@@ -1,0 +1,80 @@
+= ADR-0010: Returns, in order-service, refunded when the goods arrive back
+:description: Where returns live, how "never return more than was bought" holds under concurrency, and when money goes back.
+
+* *Status:* Proposed
+* *Date:* 2026-11-26
+
+== Context
+
+A delivered order can be returned, wholly or in part. A return touches every participant: the order
+(what was bought, at which price), the warehouse (the parcel comes back), catalog (the units are
+stock again) and payment (the money goes back).
+
+Two rules must hold whatever happens:
+
+* *Never more than was bought.* Two return requests for the same line, at the same moment (a double
+  click, two browser tabs, the customer and the back office), must not together return more units
+  than were ordered.
+* *Never more money than was taken.* Refunds of one payment, together, must not exceed the capture.
+
+== Decision
+
+*Returns live in order-service*, as their own aggregate `Return`, next to `Order`. Ordering already
+owns the order's lines and their frozen prices; a separate service would have to keep a copy of them
+from events, and check the limit against a copy that may lag behind.
+
+*The limit is a conditional update, like stock reservation (s01).* Each order line counts its
+`returned` units. Requesting a return increments them only if the result stays within the ordered
+quantity, in one SQL statement; a check constraint refuses anything else. Two concurrent requests
+cannot both pass: the second sees the first's increment or fails. A rejected or cancelled return gives
+its units back.
+
+*The flow:*
+
+----
+DELIVERED order, within 14 days of delivery
+   │ customer requests a return: lines and quantities, a reason
+   ▼
+REQUESTED ──back office rejects (e.g. not received in time)──► REJECTED   (units returnable again)
+   │ back office receives the parcel
+   ▼
+RECEIVED ──► order.return-received      catalog: units back in stock (idempotent by return id)
+         ──► refund-payment             payment: money back, booked as a reversing ledger entry
+   │ payment-refunded                    │ payment-refund-failed
+   ▼                                      ▼
+REFUNDED                               REFUND_FAILED  (operations)
+----
+
+*Refund when the goods arrive back*, not when the return is requested: no money leaves for goods that
+were never sent back.
+
+*order-service commands the refund*, as it commands authorize, capture and void (ADR-0009). Catalog
+learns of the returned units through an event, as it learns of everything else (ADR-0007).
+
+*Refunds in payment-service.* One payment can have several refunds, one per return. Each is its own
+record with an idempotency key `<paymentId>:refund:<returnId>` and the same three steps as every
+provider call (unknown is not declined; the resolver asks again). The refunded total is kept on the
+payment and limited the same way as returns: a conditional update plus a check constraint
+(`refunded <= captured`). A refund is booked as a new ledger transaction reversing the capture's
+accounts (`SALES +amount`, `PROVIDER_RECEIVABLE −amount`); the capture is never edited.
+
+*Amount:* the frozen unit prices of the returned units. Only a captured payment is refunded; a return
+of an order whose payment is overdue is refused, since no money was received.
+
+== Consequences
+
+* order-service grows a second aggregate; Ordering's model now covers the whole life of a purchase.
+* New failure stories: two return requests at the same moment, a return received twice, and refunds
+  that would together exceed the capture. Each gets a test and a drill.
+* A received return always restocks; damaged goods (write-off) are left for later.
+* Returns that are requested but never sent back stay `REQUESTED` until the back office rejects them;
+  automatic expiry is left for later.
+
+== Alternatives considered
+
+* *A returns-service of its own.* A clean "after-sales" context, but it needs a replica of order lines
+  from events and enforces the limit against data that can lag, or asks order-service synchronously,
+  which couples them anyway.
+* *Refund on approval.* Simpler, and kinder to customers, but money leaves before the goods are back.
+* *Check the limit in Java, then insert.* Correct only with a lock held; the conditional update makes
+  the database the arbiter, as for stock.
