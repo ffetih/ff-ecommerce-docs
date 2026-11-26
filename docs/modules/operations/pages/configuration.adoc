@@ -36,6 +36,27 @@
 |`management.server.port` (gateway only) |`8089` (`MANAGEMENT_PORT`) |The gateway's actuator, on a port clients never see.
 |===
 
+== Containers (compose profile `app`)
+
+Set by {code-tree}/compose.yaml[`compose.yaml`]; nothing here is needed when the services run from
+the IDE.
+
+[cols="2,1,3"]
+|===
+|Variable |Value |Meaning
+
+|`IMAGE_TAG` |`0.1.0-SNAPSHOT` |Which images to run: the local build (project version), or a commit CI published (`ghcr.io/ffetih/ff-ecommerce/<service>:<short-sha>`, or `main`).
+|`KC_HOSTNAME` (Keycloak) |`http://localhost:8180` |Keycloak's fixed public address: every token's `iss`, whoever requested it.
+|`KC_HOSTNAME_BACKCHANNEL_DYNAMIC` (Keycloak) |`true` |Token and key endpoints answer on the address they were called on (`keycloak:8080` inside the network).
+|`ISSUER_URI` |`http://localhost:8180/realms/ecommerce` |The issuer the services check, the public one.
+|`SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWKSETURI` |`http://keycloak:8080/realms/ecommerce/protocol/openid-connect/certs` |Where the services fetch the signing keys from (internal).
+|`SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_KEYCLOAK_TOKENURI` (order-service) |`http://keycloak:8080/…/token` |Where order-service gets its own token (internal).
+|`KAFKA_BOOTSTRAP_SERVERS`, `*_DB_URL`, `*_SERVICE_URL`, `OTLP_TRACES_ENDPOINT` |`kafka:29092`, `postgres:5432/…`, `http://<service>:<port>`, `http://jaeger:4318/…` |Service names instead of `localhost`.
+|===
+
+Each service answers `/actuator/health/readiness` (send me traffic) and `/actuator/health/liveness`
+(do not restart me), open like `/actuator/health`; the container health checks use readiness.
+
 == Order expiry (order-service)
 
 [cols="2,1,3"]

@@ -15,7 +15,7 @@
 
 == Health and endpoints
 
-Every service exposes `/actuator/health` (open, for probes), `/actuator/prometheus` (role
+Every service exposes `/actuator/health` with `/liveness` and `/readiness` (open, for probes), `/actuator/prometheus` (role
 `monitoring` or `admin`, for Prometheus) and `/actuator/metrics` (role `admin`). The gateway does not
 route `/actuator`; call each service on its own port. The gateway's own actuator is on its management
 port, 8089.

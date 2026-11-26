@@ -28,13 +28,13 @@ the services insist on one issuer (ADR-0008).
   rebuilds and pushes only the small top layer.
 * No Docker daemon needed to build and push (`jib:build`); `jib:dockerBuild` loads the image into the
   local Docker for compose.
-* Base image `eclipse-temurin:25-jre`, pinned. The process runs as a non-root user. The JVM sizes its
+* Base image `eclipse-temurin:25-jre`: the Java 25 runtime, no compiler or tools. The process runs as a non-root user. The JVM sizes its
   heap from the container's memory limit (`-XX:MaxRAMPercentage`), not from the host's.
 * Reproducible by default: the same inputs give the same image digest.
 
 *Images live in GitHub Container Registry*, as `ghcr.io/ffetih/ff-ecommerce/<service>`, tagged with
-the commit's short SHA (immutable, what a cluster deploys) and with the project version. CI builds
-them on every run and pushes them only from `main`, after all tests have passed.
+the commit's short SHA (immutable, what a cluster deploys) and with `main` (the latest). CI builds
+and pushes them only from `main`, after all tests have passed; locally the tag is the project version.
 
 *One command starts the whole system:* `docker compose --profile app up -d` runs the six services as
 containers next to the infrastructure; `--profile observability` adds Jaeger, Prometheus and Grafana.
@@ -58,6 +58,27 @@ UI, or the services when run from the IDE.
 * Two Keycloak addresses exist in configuration (public for the issuer, internal for the calls). The
   difference is written down once, in the compose file and the configuration reference.
 * The images are what s12 deploys: Kubernetes and GitOps start from a registry that is already filled.
+
+== Implementation notes (s11)
+
+* *Only the services build an image.* The parent POM configures Jib for every module but sets
+  `jib.skip=true`; the six services set it to `false`. So `jib:dockerBuild` from the root builds six
+  images and skips the shared modules and the tests.
+* *No code changed for containers.* Every address already came from an environment variable. The
+  internal Keycloak addresses are plain Spring properties set from compose
+  (`…JWT_JWKSETURI`, `…KEYCLOAK_TOKENURI`); without them the services discover the keys from the
+  issuer as before, so the IDE, the tests and the end-to-end run are unchanged. A token requested
+  from inside the network and checked against `localhost:8180` is the proof: the first order through
+  the containers was confirmed.
+* *Health checks without curl.* The base image has no HTTP client; the checks talk HTTP to
+  `/actuator/health/readiness` through bash's `/dev/tcp`, as Keycloak's already did. The probe
+  endpoints are switched on explicitly, ready for Kubernetes (s12).
+* *Ports on WSL.* With mirrored networking, ports held by Windows processes (the IDE's services, or
+  something polling 9080) are taken for Docker too. The first `up` failed on 8080, then on 8089
+  while the IDE's gateway was still exiting, and left a container in `Created`; compose then refused
+  to start anything that depended on it. The local-run guide now says so.
+* *The images are published only from `main`*, by the CI job's own token (`packages: write`); no
+  personal token is involved.
 
 == Alternatives considered
 

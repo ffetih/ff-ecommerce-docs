@@ -57,6 +57,40 @@ On WSL with services running in the Windows IDE, set `networkingMode=mirrored` i
 `wsl --shutdown`, so `localhost` from WSL reaches them.
 ====
 
+== Or: the whole system in containers
+
+Each service is also an image (Jib, no Dockerfile; xref:architecture:adr/0012-packaging.adoc[ADR-0012]).
+The `app` profile runs all six next to the infrastructure:
+
+[source,bash]
+----
+./mvnw -q package -DskipTests jib:dockerBuild                     # six images into the local Docker
+docker compose --profile app up -d --wait                         # add --profile observability for traces
+docker compose ps --format 'table {{.Service}}\t{{.Status}}'        # every service "(healthy)"
+----
+
+The containers publish the same ports as the IDE (gateway 8080 and 8089, services 8081 to 8085), so
+scripts, the drills, the UI and Prometheus work unchanged. *Stop the IDE's services first*: on WSL
+with mirrored networking a port held by a Windows process cannot be published by Docker either, and
+compose stops the whole start-up at the first port it cannot bind
+(`address already in use`). After such a failure, `docker compose --profile app down` removes the
+half-created containers; the data stays.
+
+[cols="1,2"]
+|===
+|Command |Does
+
+|`docker compose --profile app up -d --wait` |Starts or updates everything; returns when all are healthy.
+|`docker compose logs -f order-service` |One service's log.
+|`docker compose --profile app stop` |Stops the services, keeps the infrastructure.
+|`IMAGE_TAG=main docker compose --profile app up -d` |Runs the latest images CI published from `main`, pulled from GHCR (a short commit SHA picks an exact build).
+|===
+
+Inside the network every address is a service name (`postgres:5432`, `kafka:29092`,
+`keycloak:8080`). Tokens still say `iss: http://localhost:8180/realms/ecommerce`, because Keycloak has
+a fixed public hostname; the services check that issuer but fetch the signing keys from
+`keycloak:8080`. See xref:operations:configuration.adoc#_containers_compose_profile_app[configuration].
+
 == Tokens
 
 Keycloak runs the `ecommerce` realm (users `alice`, `bob`, `admin`; the password is the username):
