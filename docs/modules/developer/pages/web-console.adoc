@@ -29,6 +29,7 @@ ff-ecommerce-ui/
         ├── cart/             # Client-side cart + per-attempt Idempotency-Key lifecycle
         ├── customer/         # /me onboarding & address updates + Admin customer lookup/deactivate
         ├── orders/           # Order list/detail, SagaTimeline, backoff polling & 202 async cancel
+        ├── payments/         # Simulated cardToken catalog & paymentStatus labels (ADR-0009)
         └── shipping/         # Admin saga operations: orders, shipments (dispatch/deliver) & reservations
 ----
 
@@ -55,17 +56,19 @@ awaits `getAccessToken()`: logged out, it sends no `Authorization` header; logge
 an expiring token via `signinSilent()` or clears the session rather than sending an expired token.
 Single-use callback codes are deduplicated across React `StrictMode` double effects.
 
-|Idempotent checkout
-|`CartProvider` stores cart items and the active `Idempotency-Key` UUID in `sessionStorage` so a
-guest cart survives the Keycloak redirect. Editing lines or quantities rotates the key automatically;
-retrying after `503 Retry-After` reuses the exact key; `200` + `Idempotent-Replayed: true` is
-surfaced explicitly, and mixed currencies are blocked before submission.
+|Idempotent checkout & payments
+|`CartProvider` stores cart items, the selected `cardToken` (`tok_ok`, `tok_decline`, `tok_slow`,
+`tok_capture_fails`) and the active `Idempotency-Key` UUID in `sessionStorage` so a guest cart
+survives the Keycloak redirect. Editing lines, quantities or `cardToken` rotates the key
+automatically; retrying after `503 Retry-After` reuses the exact key; `200` +
+`Idempotent-Replayed: true` is surfaced explicitly, and mixed currencies are blocked before submission.
 
-|Asynchronous saga & cancellation
-|`OrderDetailPage` polls `PLACED` and `CANCELLATION_REQUESTED` with backoff (`500 ms` up to `3 s`)
-and pauses cleanly after 30 seconds with a non-error "Still processing" banner. Cancelling a
-`CONFIRMED` order opens a native `<dialog>`, surfaces `202 Accepted`, and polls until `CANCELLED`
-or `SHIPPED`.
+|Asynchronous saga, payments & cancellation
+|`OrderDetailPage` polls transitional order (`PLACED`, `CANCELLATION_REQUESTED`) and payment
+(`AUTHORIZING`, `CAPTURING`, `VOIDING`) states with backoff (`500 ms` up to `3 s`) and pauses cleanly
+after 30 seconds with a non-error "Still processing" banner. Slow authorizations show "Waiting for
+payment"; capture failures surface an `OVERDUE` alert for operations. Cancelling a `CONFIRMED` order
+opens a native `<dialog>`, surfaces `202 Accepted`, and polls until `CANCELLED` (`VOIDED`) or `SHIPPED`.
 
 |Protocol Inspector
 |A collapsible developer panel in the top bar shows decoded JWT claims (`sub`, `roles`, `aud`,
@@ -118,8 +121,7 @@ async cancellation and `bob` verifies `404` anti-enumeration.
 
 [NOTE]
 ====
-Sprint alignment: `ff-ecommerce-ui` currently implements the storefront and back-office flows through
-`s06` (including the `shop` PKCE client and Playwright suites). Adding `cardToken` selection at
-checkout and `paymentStatus` visibility on orders to match `s08` (Payments) is tracked as the next
-UI slice.
+Sprint alignment: `ff-ecommerce-ui` covers the storefront and back-office flows through `s08`
+(including `cardToken` selection, `paymentStatus` tracking, the `shop` PKCE client, and both
+Playwright suites). Returns (`s09`) will plug in as a new `src/features/returns/` slice.
 ====
