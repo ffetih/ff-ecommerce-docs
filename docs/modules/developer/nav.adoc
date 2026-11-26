@@ -4,6 +4,7 @@
 * xref:codebase.adoc[Codebase map]
 * xref:api.adoc[API reference]
 * xref:ui-integration.adoc[API and login for the UI]
+* xref:web-console.adoc[Web console (ff-ecommerce-ui)]
 * xref:add-an-event.adoc[Recipe: add an event and a consumer]
 * Try it
 ** xref:try-it/order-to-delivery.adoc[An order from placing to delivery]

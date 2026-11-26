@@ -9,19 +9,20 @@ dependency is down (retry with the same idempotency key).
 
 == catalog-service API
 
-[cols="1,4,6",options="header"]
+[cols="1,4,2,6",options="header"]
 |===
-|Method |Path |Purpose
-|`POST` |`/api/v1/products` |Create a product (with an empty stock row)
-|`GET` |`+/api/v1/products/{sku}+` |One product (public)
-|`GET` |`/api/v1/products?sku=A&sku=B` |Current prices for the given SKUs; all products without `sku` (public)
-|`PUT` |`+/api/v1/products/{sku}/price+` |Change a price
-|`POST` |`+/api/v1/products/{sku}/deactivate+` |Take off sale: new orders are refused, placed ones complete
-|`POST` |`+/api/v1/stock/{sku}/receipts+` |Goods receipt, idempotent by `referenceId`
-|`GET` |`+/api/v1/stock/{sku}+` |`onHand`, `reserved`, `available`
-|`PUT` |`+/api/v1/reservations/{orderId}+` |Reserve all order lines or none; idempotent by order id, never again after a release
-|`POST` |`+/api/v1/reservations/{orderId}/commit+` |Order shipped: reserved units leave stock
-|`POST` |`+/api/v1/reservations/{orderId}/release+` |Order cancelled: reserved units become available
+|Method |Path |Who |Purpose
+|`POST` |`/api/v1/products` |admin |Create a product (with an empty stock row)
+|`GET` |`+/api/v1/products/{sku}+` |public |One product
+|`GET` |`/api/v1/products?sku=A&sku=B` |public |Current prices for the given SKUs; all products without `sku`
+|`PUT` |`+/api/v1/products/{sku}/price+` |admin |Change a price
+|`POST` |`+/api/v1/products/{sku}/deactivate+` |admin |Take off sale: new orders are refused, placed ones complete
+|`POST` |`+/api/v1/stock/{sku}/receipts+` |admin |Goods receipt, idempotent by `referenceId`
+|`GET` |`+/api/v1/stock/{sku}+` |admin |`onHand`, `reserved`, `available`
+|`GET` |`+/api/v1/reservations/{orderId}+` |admin |Inspect the reservation and its reserved lines for an order
+|`PUT` |`+/api/v1/reservations/{orderId}+` |admin |Reserve all order lines or none; idempotent by order id, never again after a release
+|`POST` |`+/api/v1/reservations/{orderId}/commit+` |admin |Order shipped: reserved units leave stock
+|`POST` |`+/api/v1/reservations/{orderId}/release+` |admin |Order cancelled: reserved units become available
 |===
 
 Every stock change is published as a `catalog.stock-changed` event on topic `catalog.stock`

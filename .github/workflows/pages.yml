@@ -3,6 +3,8 @@ name: Publish docs
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -26,13 +28,15 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx antora --fetch --log-failure-level=warn antora-playbook.yml
+      - run: npx antora --fetch --attribute kroki-fetch-diagram=true --log-failure-level=warn antora-playbook.yml
       - run: touch build/site/.nojekyll
-      - uses: actions/upload-pages-artifact@v3
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: build/site
 
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:

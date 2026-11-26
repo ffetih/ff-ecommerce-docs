@@ -20,6 +20,7 @@ asciidoc:
     hide-uri-scheme: ''
     code-repo: https://github.com/ffetih/ff-ecommerce
     code-tree: https://github.com/ffetih/ff-ecommerce/blob/main
+    ui-repo: https://github.com/ffetih/ff-ecommerce-ui
   extensions:
   - asciidoctor-kroki
 

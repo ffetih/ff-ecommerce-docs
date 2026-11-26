@@ -1,10 +1,11 @@
 # FF E-Commerce documentation
 
-Source of the documentation site for [ff-ecommerce](https://github.com/ffetih/ff-ecommerce),
-published at https://ffetih.github.io/ff-ecommerce-docs.
+Source of the documentation site for [ff-ecommerce](https://github.com/ffetih/ff-ecommerce) and
+[ff-ecommerce-ui](https://github.com/ffetih/ff-ecommerce-ui), published at
+https://ffetih.github.io/ff-ecommerce-docs.
 
-Built with [Antora](https://antora.org); pages are AsciiDoc, diagrams are PlantUML rendered by
-[Kroki](https://kroki.io).
+Built with [Antora](https://antora.org); pages are AsciiDoc, diagrams are Graphviz and PlantUML
+rendered by [Kroki](https://kroki.io).
 
 ## Layout
 

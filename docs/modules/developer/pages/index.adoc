@@ -8,10 +8,11 @@
 |xref:local-run.adoc[Local run and tests] |start infrastructure and services, run the three levels of tests
 |xref:codebase.adoc[Codebase map] |know where a piece of code belongs
 |xref:api.adoc[API reference] |call an endpoint: who may, what it returns
-|xref:ui-integration.adoc[API and login for the UI] |build the web console against the gateway
+|xref:ui-integration.adoc[API and login for the UI] |understand the contract a browser client must follow
+|xref:web-console.adoc[Web console (ff-ecommerce-ui)] |run, extend and test the React console and Playwright suites
 |xref:add-an-event.adoc[Recipe: add an event and a consumer] |extend the saga without breaking its guarantees
 |xref:try-it/order-to-delivery.adoc[Try it: an order] |walk one order from placing to delivery with curl
 |xref:try-it/failure-drills.adoc[Try it: failure drills] |break a safeguard on purpose and watch its test fail
 |===
 
-Code: {code-repo}[ff-ecommerce on GitHub].
+Code: {code-repo}[ff-ecommerce] (backend) and {ui-repo}[ff-ecommerce-ui] (web console).

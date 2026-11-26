@@ -55,6 +55,18 @@ call `GET /api/v1/products` without a token; logged in, refresh an expiring toke
 never send an expired one.
 ====
 
+[TIP]
+====
+Two browser-side details that matter in practice:
+
+* *Keep tokens strictly in memory* (for example `InMemoryWebStorage` in `oidc-client-ts`), never in
+  `localStorage`. Keep only non-sensitive cart items and the pending `Idempotency-Key` in
+  `sessionStorage` so a guest's cart survives the redirect to Keycloak and back to `/callback`.
+* *Switching accounts on Keycloak 26:* redirecting with `prompt=login` asks the currently signed-in
+  Keycloak user to re-authenticate; click *Restart login* on Keycloak's page (or sign out via the
+  end-session endpoint first) to sign in as a different demo user.
+====
+
 == Placing an order exactly once
 
 The order body carries the payment method as `cardToken`. In this project the provider is
@@ -108,5 +120,6 @@ taken; a back-office matter). Customers mostly need "paid" versus "not charged".
 Poll with a short interval (for example 500 ms, backing off to a few seconds) and stop at a final
 state or after a timeout, showing "still processing" rather than an error.
 
-See the xref:api.adoc[API reference] for every endpoint and xref:business:order-lifecycle.adoc[the
-order lifecycle] for what each state means to a customer.
+See xref:web-console.adoc[Web console (ff-ecommerce-ui)] for the reference React implementation and
+Playwright test suites, xref:api.adoc[API reference] for every endpoint, and
+xref:business:order-lifecycle.adoc[the order lifecycle] for what each state means to a customer.

@@ -13,6 +13,7 @@ GW=http://localhost:8080/api/v1
 ADMIN=$(token admin); ALICE=$(token alice)
 SKU=KB-$RANDOM
 J='Content-Type: application/json'
+uuid() { uuidgen 2>/dev/null | tr A-Z a-z || cat /proc/sys/kernel/random/uuid; }
 ----
 
 == 1. Back office: a product with stock
@@ -22,7 +23,7 @@ J='Content-Type: application/json'
 curl -s -X POST $GW/products -H "Authorization: Bearer $ADMIN" -H "$J" \
   -d "{\"sku\":\"$SKU\",\"name\":\"Keyboard\",\"unitPrice\":89.90,\"currency\":\"EUR\"}" | jq
 curl -s -X POST $GW/stock/$SKU/receipts -H "Authorization: Bearer $ADMIN" -H "$J" \
-  -d "{\"referenceId\":\"$(cat /proc/sys/kernel/random/uuid)\",\"quantity\":10}" | jq
+  -d "{\"referenceId\":\"$(uuid)\",\"quantity\":10}" | jq
 ----
 
 == 2. Customer: profile and order
@@ -32,7 +33,7 @@ curl -s -X POST $GW/stock/$SKU/receipts -H "Authorization: Bearer $ADMIN" -H "$J
 curl -s -X POST $GW/customers/me -H "Authorization: Bearer $ALICE" -H "$J" \
   -d '{"fullName":"Alice Example","shippingAddress":"Bağdat Cd. 1, İstanbul"}' | jq   # 409 if it exists
 
-KEY=$(cat /proc/sys/kernel/random/uuid)
+KEY=$(uuid)
 ORDER=$(curl -s -X POST $GW/orders -H "Authorization: Bearer $ALICE" -H "$J" -H "Idempotency-Key: $KEY" \
   -d "{\"cardToken\":\"tok_ok\",\"lines\":[{\"sku\":\"$SKU\",\"quantity\":2}]}" | jq -r .id)
 echo $ORDER

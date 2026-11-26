@@ -94,7 +94,8 @@ packaged services, including races repeated many times.
 |Data |PostgreSQL 17, Flyway, Hibernate 7
 |Messaging |Apache Kafka 4 (KRaft)
 |Identity |Keycloak 26
-|Tests |JUnit 5, AssertJ, Testcontainers
+|Web console |React 19, TypeScript, Vite, `oidc-client-ts`, Vitest, Playwright ({ui-repo}[ff-ecommerce-ui])
+|Tests |JUnit 5, AssertJ, Testcontainers, Playwright
 |Docs |Antora, AsciiDoc, Kroki
 |===
 
