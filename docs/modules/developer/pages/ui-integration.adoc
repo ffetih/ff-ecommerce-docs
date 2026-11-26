@@ -120,6 +120,20 @@ taken; a back-office matter). Customers mostly need "paid" versus "not charged".
 Poll with a short interval (for example 500 ms, backing off to a few seconds) and stop at a final
 state or after a timeout, showing "still processing" rather than an error.
 
+== Returns
+
+A delivered order can be returned within 14 days. Show a return button only for `DELIVERED` orders
+with `paymentStatus` `CAPTURED`; read `+GET /api/v1/orders/{id}/returns+` to show how many units of
+each line are already returned (`returnedUnits`) and limit the quantity picker to the rest.
+
+Send `POST +/api/v1/orders/{id}/returns+` with its own `Idempotency-Key`, created when the return
+form opens. A `422` carries the reason in `detail` (too late, more than is left); show it as is. Two
+tabs can still race: the server decides, and one of them gets the `422`.
+
+The return then moves on the back office's side: `REQUESTED` until the parcel arrives, then
+`RECEIVED`, and shortly after `REFUNDED`. Poll the return like an order. The back office console
+needs "received" and "reject" buttons on `REQUESTED` returns.
+
 See xref:web-console.adoc[Web console (ff-ecommerce-ui)] for the reference React implementation and
 Playwright test suites, xref:api.adoc[API reference] for every endpoint, and
 xref:business:order-lifecycle.adoc[the order lifecycle] for what each state means to a customer.

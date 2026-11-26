@@ -138,6 +138,41 @@ order stays SHIPPED and the money is captured.
 |`409`. Afterwards it can only become a return, refunded through payments (s09).
 |===
 
+== Returns
+
+A delivered order can be returned within 14 days, wholly or in part
+(xref:adr/0010-returns-in-order-service.adoc[ADR-0010]). Returns are their own aggregate in
+order-service; the refund follows the goods, not the request.
+
+[plantuml,returns-sequence,svg]
+----
+@startuml
+skinparam shadowing false
+skinparam defaultFontName sans-serif
+actor Customer
+actor "Back office" as BO
+participant "order-service" as O
+queue "order.lifecycle" as OL
+participant "catalog-service" as C
+queue "payment.commands" as PC
+participant "payment-service" as P
+queue "payment.events" as PE
+
+Customer -> O : request return (lines, reason)
+note right of O : counter per order line:\nnever more than was bought
+BO -> O : parcel received
+O -> OL : return-received
+OL -> C : units back on hand
+O -> PC : refund-payment
+PC -> P : refund within the capture,\nledger: reversal
+P -> PE : payment-refunded
+PE -> O : return REFUNDED
+@enduml
+----
+
+A return the back office rejects counts its units back. A refund the provider refuses leaves the
+return `REFUND_FAILED` for operations; the units are back in stock regardless.
+
 The full list of situations and their compensation is in
 xref:adr/0007-order-saga.adoc[ADR-0007]; the reasoning behind each rule is in the
 xref:consistency/index.adoc[failure stories].

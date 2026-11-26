@@ -88,3 +88,28 @@ cancelled, and any hold released.
 If the money cannot be taken when the parcel leaves (for example, the hold expired), the parcel is
 not called back: the order stays Shipped and the payment becomes *overdue*, for the back office to
 collect. A refund after a return follows with returns (s09).
+
+== Returns
+
+[cols="1,3"]
+|===
+|Return is |Meaning
+
+|Requested
+|The customer asked to send units back, with a reason, within 14 days of delivery. Nothing is refunded yet.
+
+|Received
+|The parcel is back at the warehouse: the units are stock again, and the refund has started.
+
+|Refunded
+|The money for the returned units is back with the customer, at the prices paid.
+
+|Rejected
+|The back office refused it, for example because the parcel never arrived. The units can be returned in a new request.
+
+|Refund failed
+|The units are back, but the money could not be returned (for example, the card account was closed). The back office takes over.
+|===
+
+An order can have several returns, together never more units than were bought. The order itself
+stays Delivered.

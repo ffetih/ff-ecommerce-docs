@@ -1,0 +1,47 @@
+= A return received twice
+:description: The warehouse confirms the same returned parcel twice, or the announcement of it is delivered again.
+
+== The scenario
+
+The returned parcel arrives and the back office clicks "received". The click is repeated: a double
+click, a retry after a slow answer, or two colleagues at once. Or, later, the `return-received`
+event reaches catalog again: redelivered by Kafka, or replayed from a dead-letter topic after the
+inbox has forgotten it.
+
+== What would go wrong
+
+Each "received" restocks the units and starts a refund. Twice received: two units on the shelf for
+one that came back, and the money refunded twice. Stock counts drift, and the second refund is a loss.
+
+== The fix
+
+Every step guards itself, instead of trusting the step before it:
+
+[cols="1,2"]
+|===
+|Where |Guard
+
+|order-service
+|A received return ignores "receive": it changes nothing and *sends nothing*. Two clicks at the same
+moment are settled by the return's version: one commits, the other gets `409`. The event and the
+refund command are written in the same transaction as the change, so they exist exactly once.
+
+|catalog
+|The inbox skips a redelivered event. Beyond that, each returned line is booked as a goods receipt
+whose reference is derived from the return and the SKU. A receipt is never booked twice, so the same
+return announced again with a new event id, or after the inbox has forgotten it, adds nothing.
+
+|payment
+|One refund per return (`return_id` is unique), and one provider call per idempotency key
+`<paymentId>:refund:<returnId>`.
+|===
+
+== How it is proven
+
+* `ReturnApiIT`: `receivingStartsTheRefundOnceAndTheAnswerCompletesTheReturn`: two receives, exactly
+  one `return-received` and one `refund-payment` in the outbox.
+* `SagaParticipationIT` (catalog): `aReceivedReturnRestocksItsUnitsOnce`: the same event twice and
+  once more with a new id: exactly the returned units back.
+* `RefundServiceTest`: `aRepeatedCommandForTheSameReturnRefundsOnce`.
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc#_12_a_return_received_twice[failure drill 12].

@@ -18,8 +18,8 @@ decisions are recorded as ADRs, *these docs are updated*, and the sprint is tagg
 |s06 |Saga hardening |Cancellation decided by shipping; delivery only after dispatch; order expiry; outbox and dead-letter metrics; replay guards; inbox retention |done
 |s07 |Documentation |This site: role-based guides, domain model, failure stories with live drills, runbooks |done
 |s08 |Payments |payment-service commanded by order-service (ADR-0009): authorize before confirming, capture at dispatch, void on cancellation; idempotency keys per provider call; unknown outcomes resolved, never declined; a double-entry ledger the database keeps balanced; three new failure stories |done
-|s09 |Returns |Concurrency-safe return limits; refunds through payments |next
-|s10 |Observability |Distributed tracing, dashboards, alerts |planned
+|s09 |Returns |Returns in order-service (ADR-0010): within 14 days of delivery, never more than was bought (a database-enforced counter per order line); refund when the goods arrive back, never more than was captured; restock idempotent by return; three new failure stories |done
+|s10 |Observability |Distributed tracing, dashboards, alerts |next
 |s11 |Packaging |Container images, one-command stack, Kubernetes manifests, Kafka authentication |planned
 |s12+ |Optional |Marketplace (sellers, orders split per seller, split payments and payouts); promotions; back-in-stock notifications |optional
 |===
@@ -28,8 +28,10 @@ A web console (customer shop and back-office saga view) is built in parallel in
 {ui-repo}[ff-ecommerce-ui] (see xref:developer:web-console.adoc[Web console] and
 xref:developer:ui-integration.adoc[API and login for the UI]).
 
-== Next: s09 Returns
+== Next: s10 Observability
 
-A delivered order can be returned, wholly or in part, within a period. The hard parts: two return
-requests for the same lines at the same moment must not return more than was bought, and the refund
-goes through payments as a new, reversing ledger transaction, never by editing the capture.
+Thirteen failure stories, and each one ends with "how would anyone notice in production?". s10
+answers it with the tools of a real operation: one trace id following an order through HTTP and
+Kafka across all five services, Prometheus scraping the outbox and dead-letter metrics that exist
+since s06, dashboards per saga step, and the alert rules written down in the operations guide turned
+into real ones.

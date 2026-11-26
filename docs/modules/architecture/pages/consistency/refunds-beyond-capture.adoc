@@ -1,0 +1,46 @@
+= Refunds beyond the capture
+:description: Refunds for one payment would together give back more money than was taken.
+
+== The scenario
+
+An order was paid, shipped and partly returned twice. Each return asks for its own refund. Through
+a bug, a replayed command with another return id, or two refunds handled at the same moment, the
+refunds of one payment would together exceed what was captured.
+
+== What would go wrong
+
+The provider might refuse, or it might not: some providers allow refunding more than was captured,
+as a payout. Either way the ledger would show negative sales for the order, and the money would be
+gone. Checking "captured minus refunded" in Java before calling the provider has the same gap as any
+read-then-write: two refunds read the same remainder.
+
+== The fix
+
+The refunded total lives on the payment and is counted *before* the provider is asked, in one
+conditional statement (xref:adr/0010-returns-in-order-service.adoc[ADR-0010]):
+
+[source,sql]
+----
+UPDATE payments SET refunded_amount = refunded_amount + :amount
+ WHERE id = :id AND status = 'CAPTURED' AND refunded_amount + :amount <= amount
+----
+
+If no row changes, the refund is refused at once, the provider is never called, and order-service
+receives `payment-refund-failed` with the reason ("A refund of 50.00 EUR would exceed the captured
+100.00 EUR (60.00 already refunded)"). If the provider declines a refund that passed, its amount is
+counted back, so it can be refunded later. A check constraint (`refunded_amount <= amount`) refuses
+anything else.
+
+`refunded_amount` therefore means *refunded or being refunded*: like a seat that is booked before it
+is paid for. A refund is booked in the ledger as a new transaction with the capture's accounts
+reversed; the capture itself is never changed.
+
+== How it is proven
+
+* `PaymentPersistenceIT`: `concurrentRefundsNeverExceedTheCapture`: ten refunds of 20.00 against
+  49.90, at once: exactly two.
+* `RefundServiceTest`: `refundsTogetherNeverExceedTheCapture`, `aDeclinedRefundGivesItsAmountBackToTheLimit`,
+  `nothingIsRefundedForAPaymentThatWasNeverCaptured`.
+* `PaymentCommandsIT`: `refundsAReturnOnceAndRefusesWhatWouldExceedTheCapture` (Kafka).
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc#_13_refunds_beyond_the_capture[failure drill 13].

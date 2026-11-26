@@ -65,13 +65,13 @@ digraph context {
 
 |`order-service` |orders
 |Order placement at catalog prices, idempotent per `Idempotency-Key`; the order lifecycle; order expiry;
-drives the payment (authorize, capture, void).
+drives the payment (authorize, capture, void, refund); returns.
 
 |`shipping-service` |shipments
 |One shipment per confirmed order; dispatch and delivery; decides cancellations of confirmed orders.
 
 |`payment-service` |payments, ledger
-|Authorize, capture and void through the (simulated) provider with an idempotency key per call;
+|Authorize, capture, void and refund through the (simulated) provider with an idempotency key per call;
 resolves unanswered calls; books every money movement in a double-entry ledger.
 
 |`gateway` |nothing
@@ -104,6 +104,10 @@ point of no return (xref:adr/0007-order-saga.adoc[ADR-0007], xref:saga.adoc[the 
 |Payments, commanded |order-service tells payment-service what to do; unknown provider outcomes are
 asked again, never guessed (xref:adr/0009-payments-driven-by-order-service.adoc[ADR-0009]).
 
+|Limits kept by the database |Stock reservations, returned units and refunded amounts are counted with
+conditional updates and check constraints, so concurrent requests cannot exceed them
+(xref:adr/0010-returns-in-order-service.adoc[ADR-0010]).
+
 |Security |Every service is a resource server with deny-by-default rules
 (xref:adr/0008-security.adoc[ADR-0008], xref:security.adoc[security model]).
 |===
@@ -112,7 +116,7 @@ asked again, never guessed (xref:adr/0009-payments-driven-by-order-service.adoc[
 
 . *Consistent under failure.* Stock, orders and parcels never disagree for good, whatever the order
   or the number of times messages arrive, and no customer is charged twice or for nothing.
-  xref:consistency/index.adoc[Ten failure stories] show how.
+  xref:consistency/index.adoc[Thirteen failure stories] show how.
 . *Visible when stuck.* A step that cannot happen is measured, not silently lost
   (xref:operations:metrics.adoc[metrics]).
 . *Secure by default.* An endpoint nobody listed is closed.

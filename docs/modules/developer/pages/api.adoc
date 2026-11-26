@@ -74,6 +74,24 @@ order is confirmed only once the payment is authorized; `paymentStatus` shows wh
 `NOT_REQUESTED`, `AUTHORIZING`, `AUTHORIZED`, `DECLINED`, `VOIDING`, `VOIDED`, `CAPTURING`, `CAPTURED`,
 `OVERDUE` (xref:architecture:saga.adoc#_payment_states_as_the_order_sees_them[payment states]).
 
+=== Returns (order-service)
+
+[cols="1,4,2,6",options="header"]
+|===
+|Method |Path |Who |Purpose
+|`POST` |`+/api/v1/orders/{orderId}/returns+` |owner, admin |Ask to return units of a delivered order; requires an `Idempotency-Key` header
+|`GET` |`+/api/v1/orders/{orderId}/returns+` |owner, admin |The order's returns, and `returnedUnits` per SKU (rejected returns excluded)
+|`GET` |`+/api/v1/returns/{returnId}+` |owner, admin |One return
+|`POST` |`+/api/v1/returns/{returnId}/receive+` |admin |The parcel is back: restock and refund start; repeating it changes nothing
+|`POST` |`+/api/v1/returns/{returnId}/reject+` |admin |Refuse the return; its units can be returned again
+|===
+
+A return is accepted only for a `DELIVERED` order (`409` otherwise), within 14 days of delivery, whose
+payment was captured, and only while all returns of the order stay within the ordered quantities
+(`422` otherwise, with the reason). The refund amount is computed from the order's frozen prices. The
+same key with the same body returns the same return (`200`, `Idempotent-Replayed: true`); with another
+body it is a `409`. Return statuses: `REQUESTED`, `RECEIVED`, `REFUNDED`, `REFUND_FAILED`, `REJECTED`.
+
 == shipping-service API
 
 [cols="1,4,2,6",options="header"]
@@ -90,7 +108,7 @@ their shipment yet; exposing the tracking number on the order is on the roadmap.
 
 == payment-service
 
-No public API. It receives commands from order-service on `payment.commands` and answers on
+No public API. It receives commands (authorize, capture, void, refund) from order-service on `payment.commands` and answers on
 `payment.events`; its state is visible on the order. For operations: its actuator on port 8085 and
 its database (xref:operations:payments.adoc[runbook]).
 
@@ -104,4 +122,6 @@ POST /api/v1/customers/me                   {"fullName": "Alice Example", "shipp
 PUT  /api/v1/customers/me/shipping-address  {"shippingAddress": "..."}
 POST /api/v1/orders                         {"cardToken": "tok_ok", "lines": [{"sku": "KB-01", "quantity": 2}], "shippingAddress": "optional, defaults to the profile's"}
 POST /api/v1/orders/{id}/cancel             {"reason": "changed my mind"}
+POST /api/v1/orders/{id}/returns            {"lines": [{"sku": "KB-01", "quantity": 1}], "reason": "too loud"}
+POST /api/v1/returns/{id}/reject            {"reason": "parcel never arrived"}
 ----

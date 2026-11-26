@@ -1,7 +1,7 @@
 = ADR-0010: Returns, in order-service, refunded when the goods arrive back
 :description: Where returns live, how "never return more than was bought" holds under concurrency, and when money goes back.
 
-* *Status:* Proposed
+* *Status:* Accepted (implemented in s09)
 * *Date:* 2026-11-26
 
 == Context
@@ -69,6 +69,25 @@ of an order whose payment is overdue is refused, since no money was received.
 * A received return always restocks; damaged goods (write-off) are left for later.
 * Returns that are requested but never sent back stay `REQUESTED` until the back office rejects them;
   automatic expiry is left for later.
+
+== Implementation notes (s09)
+
+* *The counter is its own table*, `returned_units (order_id, sku, ordered, returned)`, not a column on
+  the order lines: those rows belong to the order's JPA mapping, and a counter changed by SQL next to
+  an ORM-managed collection is a trap. The first return of a line inserts the row; later ones add to it
+  with `INSERT … ON CONFLICT DO UPDATE … WHERE`, one statement either way.
+* *Lines are counted in SKU order*, so two returns that share lines lock their counters in the same
+  order and cannot deadlock.
+* *Returns have an idempotency key*, like orders: a double click with the same key is one return.
+  Two keys are two requests, and the counter decides.
+* *Only orders whose payment was captured can be returned.* Orders from before payments (s08) and
+  orders whose money is overdue have nothing the system could refund.
+* *The refund amount is reserved before the provider is asked* (`refunded_amount` on the payment
+  means refunded *or being refunded*); a declined refund counts it back.
+* *catalog books each returned line as a goods receipt* whose reference is derived from the return
+  and the SKU: the restock is idempotent beyond the inbox's memory.
+* *A failed refund does not undo the restock*: the goods are back either way. The return ends
+  `REFUND_FAILED` for operations.
 
 == Alternatives considered
 

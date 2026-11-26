@@ -1,4 +1,4 @@
-= Consistency: ten failure stories
+= Consistency: thirteen failure stories
 :description: Each rule in the saga exists because of one concrete way the system could end up wrong.
 
 Every service is consistent on its own. The hard part is between them: a message can arrive late,
@@ -39,9 +39,19 @@ proves it.
 
 |xref:consistency/repeated-capture.adoc[A capture repeated by a retry]
 |The instruction to take the money arrives twice, or the provider's answer to it is lost.
+
+|xref:consistency/concurrent-returns.adoc[Two return requests at the same moment]
+|Two requests to return the same units arrive together; together they would return more than was bought.
+
+|xref:consistency/return-received-twice.adoc[A return received twice]
+|The warehouse confirms the same returned parcel twice, or the announcement of it is delivered again.
+
+|xref:consistency/refunds-beyond-capture.adoc[Refunds beyond the capture]
+|Refunds for one payment would together give back more than was taken.
 |===
 
-The first seven stories came with the saga's hardening (s06); the last three with payments (s08).
+The first seven stories came with the saga's hardening (s06), the next three with payments (s08),
+the last three with returns (s09).
 
 Each story is told three times, from three angles: *why* it is designed this way (here), *break it
 and watch it* (xref:developer:try-it/failure-drills.adoc[failure drills]), and *what to do when it

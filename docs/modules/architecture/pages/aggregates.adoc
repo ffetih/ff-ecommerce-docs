@@ -24,12 +24,24 @@ SHIPPED. An impossible step throws `IllegalOrderTransitionException`. Requires a
 authorization, only `paymentAuthorized` confirms, `ship` asks for the capture, and a cancellation
 while money is held asks for the void.
 
+|`Return` (aggregate root)
+|Only for a delivered order, within 14 days of delivery, whose payment was captured. Lines name SKUs
+of the order, each once, at most the ordered quantity; prices are the order's frozen prices.
+`REQUESTED -> RECEIVED -> REFUNDED` or `REFUND_FAILED`; `REQUESTED -> REJECTED`. Receiving twice
+changes nothing.
+
 |`OrderLine` (value object)
 |SKU, quantity, the unit price frozen at placing, line total.
 
 |`Money`, `Sku` (value objects)
 |Amounts with currency and scale; SKU format. Ordering's own copies, not shared with catalog.
 |===
+
+*Where a rule spans aggregates (again).* "Never return more than was bought" spans every return of
+an order, and returns can be requested at the same moment. No single aggregate can hold it, and
+locking the order for every return would serialize unrelated work. The rule lives in the database: a
+counter per order line that a request increments in one conditional statement, inside the
+transaction that stores the return (xref:consistency/concurrent-returns.adoc[story]).
 
 == Catalog & inventory (catalog-service)
 
@@ -94,6 +106,11 @@ idempotency key, `<paymentId>:<operation>`.
 |At least two entries, one currency, summing to zero; built only from a captured payment. The
 database enforces the same rules again, makes booking idempotent by `reference`, and refuses updates
 and deletes.
+
+|`Refund`
+|One per return; `REFUNDING -> REFUNDED` or `FAILED`; idempotency key `<paymentId>:refund:<returnId>`.
+Refunds of a payment together never exceed the capture: the refunded total is counted on the payment
+by a conditional update before the provider is called, and a check constraint backs it.
 
 |`Money` (value object)
 |Positive, with exactly the currency's decimals: more decimals are rejected, never rounded. Payment's

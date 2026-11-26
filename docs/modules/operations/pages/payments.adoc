@@ -13,7 +13,8 @@ payment <order-id>      # payment row and its ledger entries
 ----
 
 `payments.status` is payment-service's view: `AUTHORIZING`, `AUTHORIZED`, `DECLINED`, `CAPTURING`,
-`CAPTURED`, `CAPTURE_FAILED`, `VOIDING`, `VOIDED`. The order's `paymentStatus` is order-service's view
+`CAPTURED`, `CAPTURE_FAILED`, `VOIDING`, `VOIDED`. Refunds are separate rows (`refunds`), one per
+return, and `payments.refunded_amount` is their total (refunded or being refunded). The order's `paymentStatus` is order-service's view
 of the same payment; they agree once the last event has been processed.
 
 == Payments that wait for the provider
@@ -58,6 +59,32 @@ select id, customer_id, total_amount, currency, updated_at from orders
 
 *Act:* collect the payment outside the system (contact the customer, a new payment link). Collecting
 it inside the system is not built yet.
+
+== Refunds that failed
+
+*Symptom:* a return is `REFUND_FAILED`; order-service logs `Refund failed for return …`, and
+payment-service has a refund `FAILED` with its `failure_reason`.
+
+*Meaning:* the returned units are back in stock, but the money did not go back. Two kinds of reason:
+
+* *The provider refused* (for example "Card account closed"). The refunded total was counted back,
+  so the amount can still be refunded.
+* *Refused before the provider was asked*: "would exceed the captured …" or "nothing captured to
+  refund". Nothing left the shop; look at the order's other refunds before doing anything
+  (xref:architecture:consistency/refunds-beyond-capture.adoc[why]).
+
+*Check:*
+
+[source,sql]
+----
+-- payment_db
+select r.order_id, r.return_id, r.amount, r.failure_reason, p.amount as captured, p.refunded_amount
+  from refunds r join payments p on p.id = r.payment_id
+ where r.status = 'FAILED' order by r.updated_at;
+----
+
+*Act:* pay the customer back outside the system (bank transfer). A retry of the same return is not
+built: one return has one refund.
 
 == The ledger
 

@@ -117,6 +117,12 @@ exactly; across contexts, say which one you mean.
 |*cancel the shipment*, only before dispatch
 |*void*: release the hold; after capture only a refund gives money back
 
+|*return*
+|goods of a delivered order sent back: lines, frozen prices, a reason; counted per line
+|units *received* back: stock on hand again, booked as a goods receipt
+|not involved: the customer sends the parcel
+|a *refund*: money back for one return, never more than was captured
+
 |*customer*
 |a snapshot taken when placing: id, active, address
 |not known

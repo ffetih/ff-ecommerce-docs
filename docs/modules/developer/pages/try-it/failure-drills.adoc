@@ -30,7 +30,11 @@ token picks the payment outcome: `tok_ok` (default), `tok_decline`, `tok_slow`, 
 |`show <order>` |The order's status and payment status, its shipment's status (or `none`), and the stock.
 |`cancel <order>` |Cancels the order as bob; prints the HTTP status.
 |`dispatch <order>` |Dispatches the order's shipment as the warehouse; prints the HTTP status.
-|`payment <order>` |payment-service's payment row and ledger entries for the order (from its database).
+|`payment <order>` |payment-service's payment row, ledger entries and refunds for the order (from its database).
+|`delivered [qty] [card]` |Places an order for `qty` units of `$SKU`, ships and delivers it; prints the order id.
+|`ret <order> [qty]` |Asks to return `qty` units of `$SKU` as bob; prints the HTTP status and the return id (or the refusal).
+|`receive <return>` |The back office receives the returned parcel; prints the HTTP status and the return's status.
+|`returns <order>` |The order's returns and how many units of each SKU they hold.
 |`dl` |order-service's dead-letter counter, with its tags.
 |`outbox` |order-service's outbox: messages waiting for Kafka, and the age of the oldest.
 |`send_event <topic> <key> <type> <data>` |Publishes an event as if a service had sent it.
@@ -468,3 +472,100 @@ the books either.
 * *Run:* `./mvnw verify -pl payment-service -Dit.test='PaymentPersistenceIT#bookingACaptureTwice*'`
 * *Expect:* the second booking is accepted, and the balances are twice the captured amount: revenue
   the shop never received.
+
+== 11. Two return requests at the same moment
+
+Story: xref:architecture:consistency/concurrent-returns.adoc[Two return requests at the same moment].
+
+=== Live
+
+Two units delivered, four requests for one unit each, at once:
+
+[source,bash]
+----
+fresh
+ORDER=$(delivered 2); show $ORDER
+for i in 1 2 3 4; do ret $ORDER 1 & done; wait
+returns $ORDER
+----
+
+Two requests get `201` with a return id, two get `422`: "Not that many units of … can still be
+returned: 2 ordered, some already returned". `returns` shows two returns `REQUESTED` and
+`returnedUnits` at 2. Which two win depends on timing; that exactly two win does not.
+
+=== Break it
+
+* *Change:* in `JdbcReturnedUnits.take` (order-service), delete the `WHERE` line of the statement.
+* *Run:* `./mvnw verify -pl order-service -Dit.test='ReturnApiIT#concurrentRequests*'`
+* *Expect:* still only two returns, but eight `500` instead of `422`: the check constraint
+  `returned_units_within_order` is the last line, and it holds. The conditional statement is what
+  turns the limit into a clear answer. Delete the constraint from `V8` as well (on the lab branch,
+  with a fresh database) and ten returns are accepted for two keyboards.
+
+== 12. A return received twice
+
+Story: xref:architecture:consistency/return-received-twice.adoc[A return received twice].
+
+=== Live
+
+Receive one return twice at once, then announce it to catalog again with a new event id:
+
+[source,bash]
+----
+fresh
+ORDER=$(delivered 1); R=$(ret $ORDER 1 | awk '{print $4}'); show $ORDER
+receive $R & receive $R & wait
+sleep 3; show $ORDER; returns $ORDER; payment $ORDER
+send_event order.lifecycle $ORDER order.return-received \
+  "{\"returnId\":\"$R\",\"orderId\":\"$ORDER\",\"lines\":[{\"sku\":\"$SKU\",\"quantity\":1}]}"
+sleep 3; show $ORDER
+----
+
+The two receives answer `200 RECEIVED` and `200 RECEIVED` (the second came after the first had
+committed) or one of them `409` (both at the same moment: the version decided). Either way: the stock's
+`onHand` rises by one, the return is `REFUNDED` with 5.00, and payment-service has one refund, one
+`REFUND` ledger transaction and `refunded_amount` 5.00. After the replayed event, `onHand` does not move.
+
+=== Break it
+
+* *Change:* in `ReturnedStockService.receiptId` (catalog), return `UUID.randomUUID()`.
+* *Run:* `./mvnw verify -pl catalog-service -Dit.test='SagaParticipationIT#aReceivedReturn*'`
+* *Expect:* `onHand` 14 instead of 12: the replayed announcement restocked the same units again.
+  The inbox still stopped the plain redelivery; only the receipt stops a replay with a new id.
+
+== 13. Refunds beyond the capture
+
+Story: xref:architecture:consistency/refunds-beyond-capture.adoc[Refunds beyond the capture].
+
+=== Live
+
+An order paid 5.00, then two refund commands of 3.00 each, as if for two different returns:
+
+[source,bash]
+----
+fresh
+ORDER=$(delivered 1)
+for i in 1 2; do
+  send_event payment.commands $ORDER payment.refund-payment \
+    "{\"orderId\":\"$ORDER\",\"returnId\":\"$(uuid)\",\"amount\":3.00,\"currency\":\"EUR\"}"
+done
+sleep 3; payment $ORDER
+docker compose exec -T -e PGPASSWORD=payment_service postgres psql -h localhost -U payment_service -d payment_db \
+  -c "update payments set refunded_amount = amount + 1 where order_id = '$ORDER'"
+----
+
+`refunded_amount` 3.00; one refund `REFUNDED` 3.00 and one `FAILED` with "A refund of 3.00 EUR would
+exceed the captured 5.00 EUR (3.00 already refunded)"; the ledger shows the capture and one `REFUND`
+transaction (`SALES 3.00`, `PROVIDER_RECEIVABLE -3.00`). The refused refund never reached the
+provider. The manual update fails on the check constraint `payments_refunds_within_amount`.
+
+order-service knows no returns with these ids, so it dead-letters both answers: `dl` rises by two.
+That is the right reaction to answers nobody asked for.
+
+=== Break it
+
+* *Change:* in `JdbcPayments.reserveRefund`, delete `AND refunded_amount + :amount <= amount`.
+* *Run:* `./mvnw verify -pl payment-service -Dit.test='PaymentCommandsIT#refunds*'`
+* *Expect:* no `payment-refund-failed` for the refund over the limit. The check constraint still
+  stops the money, but as an error: the command ends in a dead-letter topic, and order-service is
+  never told why its refund did not happen.

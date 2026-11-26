@@ -40,6 +40,13 @@ stays shipped and the payment is overdue.
 |Delivery
 |An order can only be delivered after it was shipped.
 
+|Returns
+|A delivered and paid order can be returned, wholly or in part, within 14 days of delivery. All
+returns of an order together never exceed what was bought, even when requests arrive at the same
+moment. The money goes back when the parcel arrives back, at the prices paid, and never more than
+was taken. A return the warehouse rejects (for example, the parcel never arrived) can be requested
+again. Returned goods are stock again.
+
 |Products off sale
 |A deactivated product cannot be ordered any more. Orders placed before keep their reservation and
 complete normally.

@@ -1,0 +1,53 @@
+= Two return requests at the same moment
+:description: Two requests to return the same units arrive together. Together they would return more than was bought.
+
+== The scenario
+
+A customer bought two keyboards. Two requests to return them arrive at the same moment: two browser
+tabs, a double click with two idempotency keys, or the customer and the back office acting at once.
+Each asks for two keyboards.
+
+== What would go wrong
+
+The natural code reads first, then writes:
+
+[source]
+----
+returned = SELECT sum of returned keyboards      -- both requests read 0
+if returned + 2 <= 2: INSERT the return          -- both pass, both insert
+----
+
+Both requests read "nothing returned yet", both pass the check, and four keyboards are returned for
+two bought. Four refunds follow for two keyboards' worth of money; the second pair is money the shop
+never received. The check was correct; it was only too far from the write.
+
+== The fix
+
+The check *is* the write. Each order line has a counter of returned units, and a request adds to it
+in one statement that only succeeds within the limit (xref:adr/0010-returns-in-order-service.adoc[ADR-0010]):
+
+[source,sql]
+----
+INSERT INTO returned_units (order_id, sku, ordered, returned) VALUES (:order, :sku, 2, 2)
+ON CONFLICT (order_id, sku) DO UPDATE
+   SET returned = returned_units.returned + EXCLUDED.returned
+ WHERE returned_units.returned + EXCLUDED.returned <= returned_units.ordered
+----
+
+PostgreSQL applies a conflicting insert as an update of the locked row. The second request waits for
+the first, then sees its count: `2 + 2 <= 2` is false, no row changes, and order-service answers
+`422`. The whole request rolls back, including any other lines of the same return. A check
+constraint (`returned <= ordered`) refuses anything that gets past this, from any code. A rejected
+return counts its units back.
+
+It is the same idea as reserving stock (s01) and as the limit on refunds: let the database be the
+arbiter of a number that many requests change at once.
+
+== How it is proven
+
+* `ReturnApiIT`: `concurrentRequestsNeverReturnMoreThanWasBought`: ten requests for one keyboard
+  each, two bought: exactly two `201`, eight `422`, the counter at 2.
+* `ReturnE2EIT`: `concurrentReturnsNeverExceedWhatWasBought`, through the gateway on the whole platform.
+* `ReturnApiIT`: `aRejectedReturnGivesItsUnitsBack`.
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc#_11_two_return_requests_at_the_same_moment[failure drill 11].

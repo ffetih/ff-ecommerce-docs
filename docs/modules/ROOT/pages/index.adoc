@@ -21,7 +21,7 @@ The answer here is a saga on top of a transactional outbox and an idempotent inb
 owning each decision that cannot be undone. Catalog and shipping are choreographed; payment, where a
 mistake costs money directly, is commanded by order-service.
 
-== Ten failure stories
+== Thirteen failure stories
 
 Each rule exists because of one concrete way the system could end up wrong:
 
@@ -58,6 +58,15 @@ Each rule exists because of one concrete way the system could end up wrong:
 
 |xref:architecture:consistency/repeated-capture.adoc[A capture repeated by a retry]
 |a customer charged twice, revenue booked twice
+
+|xref:architecture:consistency/concurrent-returns.adoc[Two return requests at the same moment]
+|four keyboards returned for two bought
+
+|xref:architecture:consistency/return-received-twice.adoc[A return received twice]
+|units restocked twice, money refunded twice
+
+|xref:architecture:consistency/refunds-beyond-capture.adoc[Refunds beyond the capture]
+|more money given back than was ever taken
 |===
 
 == Engineering scope
@@ -70,7 +79,8 @@ Each rule exists because of one concrete way the system could end up wrong:
 |Concurrency-safe stock reservations; transactional outbox with ordered relay; idempotent inbox;
 choreographed saga with compensation; cancellation decided by the owner of the point of no return;
 order expiry; payments with idempotent provider calls, unknown outcomes resolved rather than guessed,
-and a double-entry ledger the database keeps balanced.
+and a double-entry ledger the database keeps balanced; returns and refunds whose limits hold under
+concurrency.
 
 |Security
 |Keycloak; every service an OAuth2 resource server with audience checks and enforced

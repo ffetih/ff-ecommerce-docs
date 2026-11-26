@@ -35,6 +35,15 @@
 |`ecommerce.orders.expiry.batch-size` |`100` |Orders handled per scan.
 |===
 
+== Returns (order-service)
+
+[cols="2,1,3"]
+|===
+|Property |Default |Meaning
+
+|`ecommerce.orders.returns.window` |`14d` |How long after delivery goods can be returned.
+|===
+
 == Payments (payment-service)
 
 [cols="2,1,3"]
@@ -49,7 +58,7 @@
 |===
 
 The payment provider is simulated inside payment-service; the card token chooses its answer
-(`tok_ok`, `tok_decline`, `tok_slow`, `tok_capture_fails`). It keeps its idempotency keys in memory,
+(`tok_ok`, `tok_decline`, `tok_slow`, `tok_capture_fails`, `tok_refund_fails`). It keeps its idempotency keys in memory,
 so a restart forgets them.
 
 == Calls between services (order-service)
@@ -82,5 +91,5 @@ so a restart forgets them.
 
 |`spring.http.clients.connect-timeout` |`2s` |Connecting to a service; failure answers `502`.
 |`spring.http.clients.read-timeout` |`10s` |Waiting for a service's answer; a timeout answers `504`.
-|`CATALOG_SERVICE_URL`, `CUSTOMER_SERVICE_URL`, `ORDER_SERVICE_URL`, `SHIPPING_SERVICE_URL` |`localhost:808x` |Where each route goes.
+|`CATALOG_SERVICE_URL`, `CUSTOMER_SERVICE_URL`, `ORDER_SERVICE_URL`, `SHIPPING_SERVICE_URL` |`localhost:808x` |Where each route goes. `/api/v1/returns/**` goes to order-service.
 |===

@@ -23,7 +23,9 @@ Overdue (payment):: The parcel left but the capture failed: the customer owes th
 Order expiry:: Automatic cancellation of orders that stopped moving.
 Payment provider:: The external party that talks to the banks. Simulated in this project.
 Release (stock):: Reserved units become available again because the order was cancelled.
+Refund (payment):: Money given back for one return, booked as a reversal of the capture. All refunds of a payment together never exceed what was captured.
 Reservation:: Units set aside for one order; all lines or none.
+Return:: Goods of a delivered order sent back by the customer, within 14 days of delivery. Refunded when the parcel arrives back, at the order's frozen prices.
 Saga:: A business process across several services, each doing its part in its own transaction and announcing it.
 Shipment:: The parcel for one confirmed order.
 SKU:: Stock keeping unit: the product code.
