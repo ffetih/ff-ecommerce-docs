@@ -40,6 +40,6 @@ Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
 
 See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts]. Since s10
 both are alert rules in Prometheus (`OutboxStuck`, `DeadLetters`), and the stuck order's trace shows
-where it stopped (xref:outbox-trace.adoc[A trace that breaks at the outbox]).
+where it stopped (xref:consistency/outbox-trace.adoc[A trace that breaks at the outbox]).
 
 Decision record: xref:adr/0005-transactional-outbox-and-inbox.adoc[ADR-0005].

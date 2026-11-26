@@ -68,7 +68,7 @@ The fix (`ProducerBlockLimit`): the messaging module caps `max.block.ms` at the 
 unless the service sets it itself. One attempt now costs at most 5 seconds; the waiting moves to the
 pauses between attempts, which the relay controls and which grow 1, 2, 4, 8, 16 s:
 
-image::operations:jaeger-trace-kafka-down-fixed.png[After the fix: six failed relay attempts of 5 seconds with growing pauses, then the saga continues]
+image::operations:jaeger-trace-kafka-down-fixed.png["After the fix: six failed relay attempts of 5 seconds with growing pauses, then the saga continues"]
 
 == How it is proven
 

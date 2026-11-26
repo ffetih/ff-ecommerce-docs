@@ -40,7 +40,7 @@ docker compose --profile observability up -d
 
 Without the profile, the services run as before: a span that cannot be exported is dropped.
 
-image::prometheus-targets.png[Prometheus targets: the gateway on its management port, five services scraped with a token, all up]
+image::prometheus-targets.png["Prometheus targets: the gateway on its management port, five services scraped with a token, all up"]
 
 == Follow one order: from its database row to its trace
 
@@ -57,7 +57,7 @@ echo "http://localhost:16686/trace/$TRACE"
 (In the drills terminal, `trace $ORDER` prints the same link.) The same id appears in every log line
 written for that order, in every service: a line in a log leads to the trace, and the trace to the lines.
 
-image::jaeger-order-trace.png[One order as one trace: gateway, order-service, outbox, Kafka, catalog, payment, shipping]
+image::jaeger-order-trace.png["One order as one trace: gateway, order-service, outbox, Kafka, catalog, payment, shipping"]
 
 How to read it, top to bottom:
 
@@ -80,7 +80,7 @@ service and operation, or by tag (`error=true`, `topic=payment.commands`).
 A failed step looks just as clear. Here the product was out of stock: catalog answers
 `stock-reservation-failed`, and the saga's compensation runs inside the same trace:
 
-image::jaeger-trace-stock-out.png[A trace of an order cancelled for lack of stock: stock-reservation-failed, then order-cancelled]
+image::jaeger-trace-stock-out.png["A trace of an order cancelled for lack of stock: stock-reservation-failed, then order-cancelled"]
 
 === Which service talks to which
 
@@ -97,7 +97,7 @@ image::jaeger-dependencies.png[Service dependencies drawn from traces]
 *Services:* scrape status per service (`UP` / `DOWN`), requests per second, server errors (5xx) per
 second, latency p95, heap.
 
-image::grafana-overview.png[Grafana: all six services up, request rate, latency and heap]
+image::grafana-overview.png["Grafana: all six services up, request rate, latency and heap"]
 
 *Messaging (outbox → Kafka → listeners):*
 
@@ -139,7 +139,7 @@ for about two minutes while an order was placed.
 The order was accepted; its event waited in the outbox. The age climbed, `OutboxStuck` went pending
 after 30 s and firing a minute later, and both dropped back by themselves when Kafka returned:
 
-image::grafana-kafka-down.png[Grafana during the outage: outbox age climbing to minutes, then back to zero]
+image::grafana-kafka-down.png["Grafana during the outage: outbox age climbing to minutes, then back to zero"]
 
 image::prometheus-outbox-stuck-firing.png[Prometheus: OutboxStuck firing]
 
@@ -147,7 +147,7 @@ The order's trace shows the outage from the inside: every failed relay attempt, 
 went through, all in the customer's original trace. What it revealed is
 xref:architecture:consistency/outbox-trace.adoc[failure story 14].
 
-image::jaeger-trace-kafka-down-fixed.png[One trace through a Kafka outage: six failed relay attempts of 5 s, then the saga continues]
+image::jaeger-trace-kafka-down-fixed.png["One trace through a Kafka outage: six failed relay attempts of 5 s, then the saga continues"]
 
 == Who may read what
 

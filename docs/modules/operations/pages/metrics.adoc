@@ -29,7 +29,7 @@ Every service that uses the messaging module (catalog, order, shipping, payment)
 |follows the traffic, `error="none"`
 |other `error` values: sends to Kafka fail
 
-|`spring_kafka_listener_seconds_count{error}`
+|`+spring_kafka_listener_seconds_count{error}+`
 |timer
 |follows the traffic, `error="none"`
 |other `error` values: a consumer throws (it will retry, then dead-letter)
