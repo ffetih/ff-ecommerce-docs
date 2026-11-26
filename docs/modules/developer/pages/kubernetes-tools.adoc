@@ -1,0 +1,145 @@
+= Kubernetes tools on WSL
+:description: The command-line tools for the local cluster (k3d, kubectl, Flux, Helm, Kustomize): what each is for, and how to install the versions this project uses.
+
+The local cluster (xref:architecture:adr/0013-kubernetes-gitops.adoc[ADR-0013]) needs five
+command-line tools. All of them run in WSL (Ubuntu), next to Docker; none is needed for the IDE, the
+tests or compose.
+
+== Who does what
+
+[source]
+----
+ your terminal (WSL)                               the cluster (k3d: k3s in Docker containers)
+ ───────────────────                               ───────────────────────────────────────────
+ k3d        creates / deletes the cluster  ──────► one node, Traefik ingress, a load balancer
+ kubectl    looks at it, and changes it    ──────► the Kubernetes API
+ flux       bootstraps Flux once, then shows ────► Flux's controllers, which do the actual work:
+            what Flux is doing                       • source-controller     fetch the Git repo, the Helm charts
+                                                     • kustomize-controller  apply deploy/ with Kustomize
+                                                     • helm-controller       install the Helm releases
+                                                     • image-* controllers   follow GHCR, commit new tags
+ helm       (optional) read a chart's values
+ kustomize  (optional) render an overlay locally, to see what Flux will apply
+----
+
+The important point: *Helm and Kustomize run inside the cluster*, in Flux's controllers. Nothing is
+installed with `helm install` or `kubectl apply -k` by hand. The two CLIs on your machine are for
+looking: what values a chart has, what YAML an overlay produces.
+
+[cols="1,1,1,3"]
+|===
+|Tool |Version used |Needed |For
+
+|k3d |v5.9.0 |yes |`scripts/cluster.sh create`: the cluster itself (k3s v1.35.5).
+|kubectl |v1.35.5 |yes |Everything you look at: pods, logs, events. Within one minor version of the cluster.
+|flux |2.10.0 |yes |`flux bootstrap` once; then `flux get …`, `flux reconcile …`, `flux logs`.
+|helm |v3.22.1 |no |`helm show values` of a chart before writing a `HelmRelease`.
+|kustomize |v5.8.1 |no |`kustomize build deploy/apps/overlays/local`: the exact YAML Flux will apply. `kubectl kustomize` does the same with the version built into kubectl.
+|===
+
+== Install
+
+Prerequisite: Docker Engine in WSL (`docker version` works without `sudo`). The commands install into
+`/usr/local/bin`; each pins the version above, so the docs, the scripts and your machine agree.
+
+=== k3d
+
+[source,bash]
+----
+curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.9.0 bash
+k3d version
+----
+
+`k3d version` also prints the default k3s version. The cluster script pins its own
+(`rancher/k3s:v1.35.5-k3s1`), so a newer k3d does not silently change Kubernetes.
+
+=== kubectl
+
+[source,bash]
+----
+curl -sLO "https://dl.k8s.io/release/v1.35.5/bin/linux/amd64/kubectl"
+sudo install -m 0755 kubectl /usr/local/bin/kubectl && rm kubectl
+kubectl version --client
+----
+
+kubectl supports a cluster one minor version older or newer than itself. An old kubectl (1.31
+against a 1.35 cluster) mostly works, until a command meets a field it does not know.
+
+=== Flux CLI
+
+[source,bash]
+----
+curl -s https://fluxcd.io/install.sh | sudo FLUX_VERSION=2.10.0 bash
+flux version --client
+----
+
+Flux 2.10 needs Kubernetes 1.35.2 or newer, which is why the cluster runs 1.35.5. After the
+bootstrap, `flux check` compares the CLI with the controllers in the cluster.
+
+=== Helm (optional)
+
+[source,bash]
+----
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | DESIRED_VERSION=v3.22.1 bash
+helm version --short
+----
+
+Used only to read charts, for example:
+
+[source,bash]
+----
+helm repo add strimzi https://strimzi.io/charts/
+helm show values strimzi/strimzi-kafka-operator | less
+----
+
+=== Kustomize (optional)
+
+kubectl already contains Kustomize (`kubectl kustomize <dir>`, `kubectl apply -k <dir>`). The
+standalone binary is usually newer; Flux's kustomize-controller also uses a recent version, so
+rendering with the standalone binary shows most exactly what Flux will do:
+
+[source,bash]
+----
+curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.8.1/kustomize_v5.8.1_linux_amd64.tar.gz" | tar xz
+sudo install -m 0755 kustomize /usr/local/bin/kustomize && rm kustomize
+kustomize version
+----
+
+== Check everything at once
+
+[source,bash]
+----
+k3d version; kubectl version --client; flux version --client; helm version --short; kustomize version
+----
+
+Shell completion makes all of them easier (Tab completes resource names, namespaces, flags):
+
+[source,bash]
+----
+for t in kubectl flux helm k3d kustomize; do echo "source <($t completion bash)" >> ~/.bashrc; done
+source ~/.bashrc
+----
+
+== The GitHub token for `flux bootstrap`
+
+`flux bootstrap github` needs a personal access token *once*: it commits Flux's own manifests to the
+repository and adds a *deploy key* (an SSH key for this one repository) that Flux uses from then on.
+The token is not stored in the cluster.
+
+Create a *fine-grained* token (GitHub → Settings → Developer settings → Personal access tokens →
+Fine-grained tokens):
+
+* *Repository access:* only `ffetih/ff-ecommerce`.
+* *Permissions:* Contents: read and write; Administration: read and write (to add the deploy key);
+  Metadata: read (added automatically).
+* A short expiry is fine: it is used only for the bootstrap.
+
+Pass it through the environment, in the terminal only, never in a file or a commit:
+
+[source,bash]
+----
+export GITHUB_TOKEN=<the token>
+----
+
+The deploy key Flux creates has *write* access (`--read-write-key`), because image automation commits
+new image tags to the repository.
