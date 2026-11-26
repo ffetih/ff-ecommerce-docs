@@ -1,0 +1,85 @@
+= ADR-0009: Payments, driven by order-service
+:description: Where payment enters the order flow, who drives it, and how money stays correct when the provider is slow or silent.
+
+* *Status:* Proposed
+* *Date:* 2026-11-26
+
+== Context
+
+Orders now need payment. A card payment has three moves: *authorize* (the bank holds the amount;
+the hold expires after some days, typically about a week), *capture* (the money moves) and *void*
+(the hold is released before capture); after capture only a *refund* gives money back.
+
+Payment adds a fourth participant to the saga (ADR-0007), and the first one where a mistake costs
+money directly. It also brings a failure the other participants do not have: the provider may not
+answer, and then the outcome is unknown rather than failed. Charging twice, or capturing for an
+order that was cancelled, are the errors to rule out.
+
+ADR-0007 chose choreography and named payments as the moment to revisit it.
+
+== Decision
+
+*Order of steps.* Stock is reserved first, then the payment is authorized; the order becomes
+`CONFIRMED` only when both have happened. No hold is placed for goods we do not have, and a
+reservation waits at most a short time for its payment.
+
+----
+place ─► reserve stock ─► authorize payment ─► CONFIRMED ─► dispatch ─► capture
+              │ no stock        │ declined                       │
+              ▼                 ▼                                 └─► capture fails: payment overdue,
+          CANCELLED     release stock, CANCELLED                       the order stays SHIPPED
+cancelled after authorization, before capture: void
+----
+
+*Capture at dispatch.* Money moves when the goods leave, the usual card-scheme rule. Dispatch is the
+point of no return (ADR-0007), so a capture that fails afterwards does not cancel anything: the order
+stays `SHIPPED`, the payment becomes overdue and visible to operations.
+
+*order-service drives the flow.* order-service already decides every step of the order's state.
+From now on it also *commands* the new participant: after `stock-reserved` it sends
+`authorize-payment`, after `shipment-dispatched` it sends `capture-payment`, and after a
+cancellation of an authorized order it sends `void-payment`; payment-service answers with events.
+The steps, the waiting points and the compensations of the payment part are written in one place.
+Catalog and shipping keep their event contracts from s06; moving them to commands as well would
+change working, proven code without adding a guarantee, and can follow later if the flow grows.
+
+*One payment per order, idempotent everywhere.* The payment's identity is the order id. Every
+command is processed once (inbox); every call to the provider carries an idempotency key derived
+from the payment and the operation, so a retry can never charge twice.
+
+*Unknown is not declined.* A provider call that times out leaves the payment *pending*: the money may
+or may not be held. payment-service asks again with the same idempotency key until the provider
+gives an answer; only an explicit decline cancels the order. Order expiry (ADR-0007) bounds the wait:
+a confirmed order is asked to cancel after 3 days, before a typical hold expires, and a cancellation
+voids the hold.
+
+*A double-entry ledger.* Every money movement (capture, refund) is booked twice, as a debit and a
+credit of the same amount, in the same transaction as the payment's change. The sum of all entries is
+always zero; a report that does not balance is a bug, found at once. An authorization moves no money
+and books nothing.
+
+*A simulated provider.* The payment provider is a port with a simulated adapter in payment-service.
+The card token on the order chooses its behaviour (approve, decline, time out), so tests and drills
+can produce every outcome on purpose.
+
+== Consequences
+
+* The payment part of the flow is readable in order-service as a sequence, including its
+  compensations; the rest stays as documented in ADR-0007.
+* order-service knows payment's commands; payment-service knows nothing about catalog or shipping.
+* Orders carry a payment method (a card token); the web console needs a field for it.
+* New failure stories: a provider that does not answer, a cancellation racing an authorization, and a
+  capture repeated by a retry. Each gets a test and a drill, like the seven of s06.
+* A refund needs a return first; it follows with returns (s09).
+
+== Alternatives considered
+
+* *Choreography, as today.* payment-service would react to `stock-reserved` and order-service to
+  `payment-authorized`. It works, but payment then depends on catalog's events, and the compensation
+  order (declined: release stock, then cancel) exists only as reactions spread over services.
+* *Full orchestration now.* Catalog and shipping would also receive commands. Cleaner on paper, but it
+  rewrites the participants whose behaviour s06 just proved, for no new guarantee.
+* *Capture at confirmation.* Simpler, but takes the customer's money before the goods exist on a
+  truck, and turns every later cancellation into a refund.
+* *Authorize before reserving.* Avoids reserving stock for customers who cannot pay, but places holds
+  for goods we may not have; declines are rarer than they are expensive to explain.

@@ -39,4 +39,8 @@ alternatives that were rejected. New records follow the xref:adr/0000-template.a
 |xref:adr/0008-security.adoc[ADR-0008]
 |Security: every service checks tokens itself, the gateway only routes
 |Accepted
+
+|xref:adr/0009-payments-driven-by-order-service.adoc[ADR-0009]
+|Payments, driven by order-service
+|Proposed
 |===
