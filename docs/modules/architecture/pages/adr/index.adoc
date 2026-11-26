@@ -50,5 +50,5 @@ alternatives that were rejected. New records follow the xref:adr/0000-template.a
 
 |xref:adr/0011-observability.adoc[ADR-0011]
 |Observability with OpenTelemetry, Jaeger, Prometheus and Grafana
-|Proposed
+|Accepted
 |===

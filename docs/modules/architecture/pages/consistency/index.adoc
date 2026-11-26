@@ -1,4 +1,4 @@
-= Consistency: thirteen failure stories
+= Consistency: fourteen failure stories
 :description: Each rule in the saga exists because of one concrete way the system could end up wrong.
 
 Every service is consistent on its own. The hard part is between them: a message can arrive late,
@@ -48,10 +48,13 @@ proves it.
 
 |xref:consistency/refunds-beyond-capture.adoc[Refunds beyond the capture]
 |Refunds for one payment would together give back more than was taken.
+
+|xref:consistency/outbox-trace.adoc[A trace that breaks at the outbox]
+|An event leaves the service later, on another thread; the order's trace, and the relay's own behaviour, disappear there.
 |===
 
 The first seven stories came with the saga's hardening (s06), the next three with payments (s08),
-the last three with returns (s09).
+the next three with returns (s09), the last one with observability (s10).
 
 Each story is told three times, from three angles: *why* it is designed this way (here), *break it
 and watch it* (xref:developer:try-it/failure-drills.adoc[failure drills]), and *what to do when it

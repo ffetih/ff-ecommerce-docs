@@ -1,0 +1,89 @@
+= A trace that breaks at the outbox
+:description: Events leave a service later and on another thread; the trace of the request that caused them must not end there.
+
+== The scenario
+
+A customer places an order. order-service stores the order and its `order-placed` event in one
+transaction and answers. Seconds or, with Kafka down, minutes later, the outbox relay publishes the
+event from its own thread. Catalog reserves stock, payment holds the money, shipping prepares a
+parcel: four services react to one request, through Kafka, at a time when the request no longer
+exists.
+
+== What would go wrong
+
+Tracing libraries follow work through the thread that does it. The relay's thread knows nothing about
+the request, so out of the box every relay run starts a new trace. One order becomes a dozen
+unrelated traces: the HTTP request in one, each Kafka hop in another, each reaction in its own. "Where
+did this order stop?" has no answer in Jaeger, which is exactly the question tracing was meant to
+answer, and exactly where the saga's interesting failures happen: between the services.
+
+There is a second, quieter failure. Without a span around the relay's work, the relay is invisible.
+How long does it wait for Kafka? How often does it retry? Nobody can see it, so nobody notices when
+it behaves differently from what the code seems to say.
+
+== The fix
+
+The outbox carries the trace context across the database
+(xref:adr/0011-observability.adoc[ADR-0011]):
+
+[source]
+----
+ request thread                       relay thread (later)
+ ──────────────                       ────────────────────
+ span "outbox append order-placed"    span "outbox relay order-placed"
+   writes traceparent into the row ──►  parent = traceparent from the row
+                                          └─ Kafka send: writes its own traceparent header
+                                               └─ each consumer continues from the header
+----
+
+* `Outbox.append` opens a short *sender* span as a child of whatever is current (an HTTP request, a
+  Kafka listener, a scheduled job) and stores its W3C `traceparent` in the new column
+  `outbox_messages.traceparent`.
+* `OutboxRelay` publishes each row inside a *receiver* span whose parent is that stored value, the way
+  a consumer continues a Kafka header. The Kafka producer span becomes its child and writes the
+  `traceparent` header; every listener continues from there.
+* Without tracing, the column stays `NULL` and the relay simply starts a fresh trace.
+
+One trace now runs from the customer's click to the last service that reacts, however long the event
+waited in between.
+
+== What the trace showed
+
+The first time Kafka was stopped with this in place, the order's trace held the whole outage: each
+failed relay attempt, then the one that went through. It also showed something nobody expected:
+
+image::operations:jaeger-trace-kafka-down.png[Before the fix: three failed relay attempts of one minute each]
+
+Each failed attempt lasted *one minute*, although the relay waits at most `send-timeout` (5 s) for
+Kafka. The reason is in Kafka's client: `send()` first waits for the topic's metadata, up to
+`max.block.ms` (60 s by default), *before* it returns the future that the relay waits on. So the
+relay's timeout never applied. While one attempt hung, the relay's single thread did nothing else:
+with one topic missing, every other key would have waited a minute per retry. That breaks the
+relay's rule that one failing key does not hold up the others.
+
+The messaging tests had never seen it: their configuration set `max.block.ms` to 3 seconds, which hid
+the production default.
+
+The fix (`ProducerBlockLimit`): the messaging module caps `max.block.ms` at the relay's send timeout,
+unless the service sets it itself. One attempt now costs at most 5 seconds; the waiting moves to the
+pauses between attempts, which the relay controls and which grow 1, 2, 4, 8, 16 s:
+
+image::operations:jaeger-trace-kafka-down-fixed.png[After the fix: six failed relay attempts of 5 seconds with growing pauses, then the saga continues]
+
+== How it is proven
+
+* `OutboxTracingIT`: `theKafkaRecordContinuesTheTraceOfTheRequestThatWroteTheEvent` (the row stores
+  the request's trace id; the record the relay sends later carries it),
+  `anEventWrittenOutsideAnyTraceStartsItsOwnTrace`. A small W3C test tracer stands in for
+  OpenTelemetry, so the test checks the propagation and not a vendor.
+* `OutboxIT`: `aFailingEventBlocksOnlyItsOwnKeyAndIsRetriedInOrder` now also requires the relay run
+  with a missing topic to return within 10 seconds; without `ProducerBlockLimit` it takes 60. The
+  test configuration no longer sets `max.block.ms`, so it runs with what production runs with.
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc#_14_a_trace_that_breaks_at_the_outbox[failure drill 14].
+
+== When it happens in production
+
+The outbox's alert (`OutboxStuck`) says *that* events wait; the waiting order's trace says *why*, with
+each attempt's error. See xref:operations:metrics.adoc#_outboxstuck[OutboxStuck] and
+xref:operations:observability.adoc[Observability].

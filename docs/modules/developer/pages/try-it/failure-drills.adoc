@@ -37,6 +37,7 @@ token picks the payment outcome: `tok_ok` (default), `tok_decline`, `tok_slow`, 
 |`returns <order>` |The order's returns and how many units of each SKU they hold.
 |`dl` |order-service's dead-letter counter, with its tags.
 |`outbox` |order-service's outbox: messages waiting for Kafka, and the age of the oldest.
+|`trace <order>` |The Jaeger link of the order's trace, from the trace id stored in its outbox row (drill 14).
 |`send_event <topic> <key> <type> <data>` |Publishes an event as if a service had sent it.
 |`race [delay]` |One round of the cancellation race (drill 1).
 |===
@@ -626,3 +627,84 @@ the second waits behind the first one's retries and arrives in the dead-letter t
 * *Expect:* no `payment-refund-failed` for the refund over the limit. The check constraint still
   stops the money, but as an error: the command ends in a dead-letter topic, and order-service is
   never told why its refund did not happen.
+
+== 14. A trace that breaks at the outbox
+
+Story: xref:architecture:consistency/outbox-trace.adoc[A trace that breaks at the outbox].
+Needs the observability profile (`docker compose --profile observability up -d`,
+xref:operations:observability.adoc[Observability]).
+
+=== Live
+
+Kafka down for a minute while an order is placed; then the order's trace:
+
+[source,bash]
+----
+fresh
+docker compose stop kafka && ORDER=$(place) && echo "order = $ORDER"
+sleep 60
+docker compose start kafka && sleep 20 && show $ORDER
+trace $ORDER
+----
+
+While Kafka is down, two more places to look:
+
+[source,bash]
+----
+docker compose exec -T -e PGPASSWORD=order_service postgres psql -h localhost -U order_service -d order_db \
+  -c "SELECT event_type, attempts, left(last_error, 80) AS last_error FROM outbox_messages WHERE published_at IS NULL"
+----
+
+and http://localhost:9090/alerts (`OutboxStuck`), or the Messaging row in Grafana.
+
+In a run:
+
+[source]
+----
+order = 0d4a01f2-570b-468f-a84c-55f8df124d92
+order    = PLACED, payment NOT_REQUESTED
+
+    event_type      | attempts |                 last_error
+ order.order-placed |        1 | org.springframework.kafka.KafkaException: Send failed
+
+order    = CONFIRMED, payment AUTHORIZED
+shipment = CREATED
+http://localhost:16686/trace/b663b2c…
+----
+
+[cols="1,2"]
+|===
+|Moment |What you see
+
+|Kafka stopped, order placed
+|`PLACED`, no error for bob: the request only writes the database. The event waits in the outbox with its `traceparent`.
+
+|After 30 s, then a minute more
+|`OutboxStuck` pending, then firing; the outbox age climbs in Grafana.
+
+|Kafka started
+|The relay's next attempt goes through, the saga continues: `CONFIRMED, payment AUTHORIZED`, shipment `CREATED`. The alert resolves.
+
+|The trace
+|One trace from bob's request to shipping: `outbox append`, six failed `outbox relay` attempts of 5 s each with growing pauses, then the successful one and everything it caused.
+|===
+
+Before the fix in the story, the same trace showed failed attempts of one minute each.
+
+If the product is sold out (`stock` shows `"available":0`), the order is cancelled instead: catalog
+answers `stock-reservation-failed`. Its trace is just as instructive, the saga's compensation in one
+tree. `drill_setup` creates a fresh product with 10 units.
+
+=== Break it
+
+* *Change:* in `OutboxRelay.send`, delete `context.setCarrier(row);`.
+* *Run:* `./mvnw verify -pl messaging -Dit.test=OutboxTracingIT`
+* *Expect:* `theKafkaRecordContinuesTheTraceOfTheRequestThatWroteTheEvent` fails: the record carries a
+  new trace id, not the request's. The trace breaks at the outbox.
+
+And the hidden minute:
+
+* *Change:* in `MessagingAutoConfiguration`, delete the `producerBlockLimit` bean.
+* *Run:* `./mvnw verify -pl messaging -Dit.test='OutboxIT#aFailingEvent*'`
+* *Expect:* the run takes a minute and fails on "less than 10 seconds": one missing topic held the
+  relay, and every other key with it, for Kafka's default `max.block.ms`.

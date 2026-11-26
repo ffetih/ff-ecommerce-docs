@@ -12,7 +12,7 @@
 |`ecommerce.messaging.outbox.poll-interval` |`500ms` |Pause between relay runs when idle.
 |`ecommerce.messaging.outbox.batch-size` |`100` |Keys claimed per relay run.
 |`ecommerce.messaging.outbox.max-per-key` |`50` |Messages of one key published per run.
-|`ecommerce.messaging.outbox.send-timeout` |`5s` |Wait for the broker's acknowledgement.
+|`ecommerce.messaging.outbox.send-timeout` |`5s` |The longest one publish attempt may take, including the wait for topic metadata: the module caps Kafka's `max.block.ms` (60 s by default) at this value, unless `spring.kafka.producer.properties.max.block.ms` is set (xref:architecture:consistency/outbox-trace.adoc[why]).
 |`ecommerce.messaging.outbox.initial-backoff` |`1s` |First retry delay of a failed message; doubles.
 |`ecommerce.messaging.outbox.max-backoff` |`5m` |Upper bound of the retry delay.
 |`ecommerce.messaging.outbox.retention` |`7d` |How long published rows are kept.
@@ -20,6 +20,20 @@
 |`ecommerce.messaging.topics.dead-letter-retention` |`30d` |`retention.ms` of dead-letter topics.
 |`ecommerce.messaging.inbox.retention` |`30d` |How long processed event ids are remembered. *Must be longer than the topic retention, or the service does not start.*
 |`spring.kafka.admin.modify-topic-configs` |`true` (services) |Apply the declared retention to topics that already exist.
+|===
+
+== Observability (every service)
+
+[cols="2,1,3"]
+|===
+|Property |Default |Meaning
+
+|`management.tracing.sampling.probability` |`1.0` (`TRACING_SAMPLING`) |Share of requests traced. Every one in development; production would sample. The end-to-end tests set `0.0`.
+|`management.opentelemetry.tracing.export.otlp.endpoint` |`http://localhost:4318/v1/traces` (`OTLP_TRACES_ENDPOINT`) |Where spans go (Jaeger's OTLP/HTTP port). Without Jaeger, spans are dropped.
+|`management.otlp.metrics.export.enabled` |`false` |The OpenTelemetry starter would also push metrics over OTLP; metrics are pulled by Prometheus instead.
+|`management.metrics.distribution.percentiles-histogram.http.server.requests` |`true` |Latency buckets, so p95 can be computed across instances.
+|`spring.kafka.template.observation-enabled`, `spring.kafka.listener.observation-enabled` |`true` (catalog, order, shipping, payment) |Kafka records carry the `traceparent` header and consumers continue the trace.
+|`management.server.port` (gateway only) |`8089` (`MANAGEMENT_PORT`) |The gateway's actuator, on a port clients never see.
 |===
 
 == Order expiry (order-service)

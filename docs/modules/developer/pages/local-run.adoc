@@ -9,6 +9,7 @@ Requires JDK 25, Docker, and for the token helpers `curl` and `jq`.
 ----
 docker compose up -d --wait               # PostgreSQL 17 :5432, Kafka :9092, Keycloak :8180
 docker compose --profile tools up -d      # adds Kafka UI on http://localhost:8090
+docker compose --profile observability up -d   # Jaeger :16686, Prometheus :9090, Grafana :3000
 docker compose down                       # stop (add -v to also delete data)
 ----
 
@@ -23,7 +24,8 @@ docker compose exec -T postgres psql -U postgres < infra/postgres/initdb/05-paym
 ----
 
 The same goes for the realm: after pulling a change to `infra/keycloak/import`, recreate Keycloak
-(`docker compose up -d --force-recreate keycloak`).
+(`docker compose up -d --force-recreate keycloak`). Without that, Prometheus' scrapes fail with
+`invalid_client` (its client came with s10).
 ====
 
 == Build once, then run services

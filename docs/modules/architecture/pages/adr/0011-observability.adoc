@@ -1,7 +1,7 @@
 = ADR-0011: Observability with OpenTelemetry, Jaeger, Prometheus and Grafana
 :description: How one order is followed across five services, how the saga's health is measured, and who may read either.
 
-* *Status:* Proposed
+* *Status:* Accepted (implemented in s10)
 * *Date:* 2026-11-26
 
 == Context
@@ -40,8 +40,8 @@ line in any service's log leads to the whole trace in Jaeger, and a trace leads 
 
 *Metrics: Prometheus scrapes, Grafana shows.* Each service exposes `/actuator/prometheus`
 (Micrometer's Prometheus registry). Prometheus scrapes them; Grafana has the Prometheus and Jaeger
-data sources and one provisioned dashboard for the saga: outbox lag, dead letters, Kafka listener
-throughput and errors, HTTP error rates, payments waiting for the provider.
+data sources and one provisioned dashboard for the saga: outbox lag, dead letters, events relayed and
+messages handled per topic and listener, HTTP rates, errors and latency.
 
 *Scraping is authenticated, not opened.* Metrics stay behind a token (ADR-0008: operational detail
 is useful to an attacker). A new confidential client `prometheus` gets client-credentials tokens
@@ -49,8 +49,8 @@ with a `monitoring` role and every service's audience; the services allow `monit
 on their metric endpoints. Prometheus fetches the token itself (`oauth2` in its scrape config).
 
 *Alerts as rules, written down once.* The alert rules from the operations guide become Prometheus
-rule files: a dead letter, an outbox older than a minute, payments waiting for the provider for more
-than five minutes. Prometheus evaluates them and shows them firing; sending them to people
+rule files: a service that does not answer its scrape, an outbox whose oldest event waits too long, a
+dead letter, a rising share of server errors. Prometheus evaluates them and shows them firing; sending them to people
 (Alertmanager, chat) is left for packaging (s11).
 
 *All of it is optional for development.* Jaeger, Prometheus and Grafana run in compose under the
@@ -64,7 +64,36 @@ there only logs a warning. Tests do not need any of it.
 * Every request and every message pays for a span. Sampling is 100% in development; production
   would sample (configurable).
 * One more Keycloak client and role, with the same "realm as code" discipline.
-* New failure story: a trace that breaks at the outbox. Its test proves the trace id survives.
+* New failure story: xref:consistency/outbox-trace.adoc[a trace that breaks at the outbox]. Its
+  test proves the trace id survives.
+
+== Implementation notes (s10)
+
+* *The outbox's span is a sender, the relay's a receiver.* `Outbox.append` starts a short
+  `SenderContext` observation whose carrier is a map: the tracer writes `traceparent` into it as it
+  would into Kafka headers, and the value goes into `outbox_messages.traceparent` (one migration per
+  service). The relay reads it back through a `ReceiverContext`, so its span continues that trace. The
+  messaging module depends on Micrometer's Observation API only, not on OpenTelemetry; its test uses a
+  small W3C tracer of its own.
+* *The trace found a bug on its first outage.* Each failed relay attempt lasted 60 s, not the 5 s
+  send timeout: `KafkaProducer.send` blocks for topic metadata up to `max.block.ms` before it returns
+  the future the relay waits on. The module now caps `max.block.ms` at the send timeout
+  (`ProducerBlockLimit`), unless a service sets it. The test configuration had hidden it by setting
+  `max.block.ms` itself; it no longer does.
+* *The starter also pushes metrics over OTLP* (Micrometer's OTLP registry). It is switched off
+  (`management.otlp.metrics.export.enabled: false`): metrics are pulled, and Jaeger accepts traces only.
+* *Prometheus runs on the host network.* The services run on the host; Prometheus fetches its token
+  from `localhost:8180`, so the token's issuer is the one the services trust. From a bridge network
+  it would call `keycloak:8080`, get a different `iss`, and every scrape would be rejected.
+* *The gateway has no security of its own*, so it does not expose `/actuator/prometheus` on its
+  public port. Its actuator moved to a management port (8089), scraped without a token; in a cluster
+  that port is not exposed outside. The end-to-end tests put it back on the main port.
+* *Four alerts, not the planned three of the same kind.* `ServiceDown`, `OutboxStuck` (30 s for 1
+  minute), `DeadLetters`, `HighServerErrorRate`. "Payments waiting for the provider" needs a gauge
+  payment-service does not have yet; its runbook query covers it meanwhile.
+* *Latency percentiles are computed in Prometheus.* `http.server.requests` publishes histogram buckets, so
+  p95 is computed in Prometheus across instances, not per instance in the service.
+* *Versions are pinned:* Jaeger 2.20.0, Prometheus 3.13.5 (LTS), Grafana 13.2.4.
 
 == Alternatives considered
 

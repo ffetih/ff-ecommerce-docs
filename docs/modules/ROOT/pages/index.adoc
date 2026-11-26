@@ -21,7 +21,7 @@ The answer here is a saga on top of a transactional outbox and an idempotent inb
 owning each decision that cannot be undone. Catalog and shipping are choreographed; payment, where a
 mistake costs money directly, is commanded by order-service.
 
-== Thirteen failure stories
+== Fourteen failure stories
 
 Each rule exists because of one concrete way the system could end up wrong:
 
@@ -67,6 +67,9 @@ Each rule exists because of one concrete way the system could end up wrong:
 
 |xref:architecture:consistency/refunds-beyond-capture.adoc[Refunds beyond the capture]
 |more money given back than was ever taken
+
+|xref:architecture:consistency/outbox-trace.adoc[A trace that breaks at the outbox]
+|an order that cannot be followed past its first service, and a relay that hangs a minute per attempt unseen
 |===
 
 == Engineering scope

@@ -1,60 +1,142 @@
 = Metrics and alerts
-:description: The three signals that show whether the saga is moving, and when to act.
+:description: The signals that show whether the saga is moving, the four alert rules, and what to do when one fires.
+
+== The saga's own metrics
 
 Every service that uses the messaging module (catalog, order, shipping, payment) reports:
 
 [cols="2,1,1,2"]
 |===
-|Metric |Kind |Healthy |Worth an alert
+|Metric (Prometheus name) |Kind |Healthy |Worth an alert
 
-|`outbox.pending`
-|gauge, messages
+|`outbox_pending_messages`
+|gauge
 |close to 0
 |keeps growing
 
-|`outbox.oldest.pending.age`
-|gauge, seconds
+|`outbox_oldest_pending_age_seconds`
+|gauge
 |about a second
-|over a minute: a key is stuck behind a failing message, or Kafka is unreachable
+|over 30 s for a minute: a key is stuck behind a failing message, or Kafka is unreachable
 
-|`messaging.dead.letters{topic, exception}`
+|`messaging_dead_letters_total{topic, exception}`
 |counter
 |absent or flat
 |any increase: a step of some order did not happen
+
+|`outbox_relay_seconds_count{topic, error}`
+|timer
+|follows the traffic, `error="none"`
+|other `error` values: sends to Kafka fail
+
+|`spring_kafka_listener_seconds_count{error}`
+|timer
+|follows the traffic, `error="none"`
+|other `error` values: a consumer throws (it will retry, then dead-letter)
 |===
 
-* The two gauges are read from the database when metrics are collected, with the database clock.
+* The two outbox gauges are read from the database when Prometheus scrapes, with the database clock.
   A failed read shows as `NaN`, not as `0`.
 * A dead letter is counted only after the dead-letter topic has accepted it. The counter appears with
   the first dead letter.
+* `outbox_relay_*` comes from the relay's own span (one per publish attempt), `spring_kafka_listener_*`
+  from Spring Kafka's listener observation. Both exist because tracing is switched on (s10).
 
-== Reading them today
+Every service also has the standard ones: `http_server_requests_seconds` (with latency buckets, so
+p95 can be computed), `jvm_*`, `hikaricp_*`, `up`.
+
+== Where to read them
+
+* *Grafana*, dashboard "ecommerce: overview": the same signals over time
+  (xref:observability.adoc#_the_dashboard[the dashboard]).
+* *Prometheus*, http://localhost:9090, for any query, for example
+  `outbox_oldest_pending_age_seconds` or `sum by (service) (rate(http_server_requests_seconds_count[1m]))`.
+* *Without the observability profile*, one value at a time with an admin token:
 
 [source,bash]
 ----
 source scripts/dev-auth.sh
 curl -s -H "Authorization: Bearer $(token admin)" \
   localhost:8083/actuator/metrics/outbox.oldest.pending.age | jq .measurements
-curl -s -H "Authorization: Bearer $(token admin)" \
-  localhost:8083/actuator/metrics/messaging.dead.letters | jq '{measurements, availableTags}'
 ----
 
-== Alert rules (with Prometheus, s10)
+== Alert rules
+
+{code-tree}/infra/prometheus/rules/ecommerce.yml[`infra/prometheus/rules/ecommerce.yml`], evaluated every
+15 seconds:
 
 [source,yaml]
 ----
-- alert: DeadLetter
-  expr: increase(messaging_dead_letters_total[5m]) > 0
-  annotations:
-    summary: "{{ $labels.application }}: dead letter on {{ $labels.topic }} ({{ $labels.exception }})"
+- alert: ServiceDown
+  expr: up == 0
+  for: 1m
 - alert: OutboxStuck
-  expr: outbox_oldest_pending_age_seconds > 60
-  for: 2m
+  expr: outbox_oldest_pending_age_seconds > 30
+  for: 1m
+- alert: DeadLetters
+  expr: increase(messaging_dead_letters_total[10m]) > 0
+- alert: HighServerErrorRate
+  expr: |
+    sum by (service) (rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+      / sum by (service) (rate(http_server_requests_seconds_count[5m])) > 0.05
+  for: 5m
 ----
 
-== Why these three
+An alert is *pending* while its condition holds but its `for` has not passed, then *firing*. It
+resolves by itself when the condition stops.
+
+== When one fires
+
+=== ServiceDown
+
+The target did not answer its scrape for a minute. On http://localhost:9090/targets the target shows
+the error:
+
+[cols="1,2"]
+|===
+|Error |Means
+
+|`connection refused` |The service is not running, or not on that port.
+|`401` |Prometheus' token was rejected: the service's issuer differs from the one that issued it, or the realm was re-imported.
+|`403` |The token has no `monitoring` role or not this service's audience: check the `prometheus` client in the realm.
+|`oauth2: "invalid_client"` |Keycloak does not know the `prometheus` client: the realm was changed but Keycloak not recreated (xref:keycloak.adoc[]).
+|===
+
+=== OutboxStuck
+
+Events are written but not published; other services stop hearing about this one's changes. Orders
+are still accepted, so nothing in front of a user shows it.
+
+[source,bash]
+----
+docker compose exec -T -e PGPASSWORD=order_service postgres psql -h localhost -U order_service -d order_db -c \
+  "SELECT event_type, message_key, attempts, next_attempt_at, left(last_error, 100) FROM outbox_messages WHERE published_at IS NULL ORDER BY id"
+----
+
+* *Every row fails, with `Send failed` or a timeout:* Kafka is unreachable. Nothing is lost: the
+  relay keeps retrying with growing pauses (up to 5 minutes) and publishes by itself once Kafka is
+  back. Fix Kafka; the alert resolves.
+* *One key fails, others are published:* that key's oldest message cannot be sent (a missing topic,
+  a message too large). Later messages of the same key wait behind it on purpose, to keep their
+  order. Fix the cause; do not delete the row.
+
+The waiting order's trace shows each attempt and its error
+(xref:observability.adoc#_follow_one_order_from_its_database_row_to_its_trace[find it from the row]).
+
+=== DeadLetters
+
+A consumer gave up on a message after its retries; the step it should have caused did not happen.
+xref:dead-letters.adoc[Runbook: dead letters].
+
+=== HighServerErrorRate
+
+In Jaeger, search the service with the tag `error=true`: the failing span names the exception and the
+call that caused it. Check `ServiceDown` for the services it calls.
+
+== Why these signals
 
 A choreographed saga fails quietly: nothing throws in front of a user when an event is not
 published or not processed. The order just stops moving, and order expiry eventually cancels it,
 which looks like a normal timeout. These metrics are what tells the two apart
-(xref:architecture:consistency/silent-failures.adoc[Failures nobody sees]).
+(xref:architecture:consistency/silent-failures.adoc[Failures nobody sees]); traces then show which
+order and where (xref:architecture:consistency/outbox-trace.adoc[A trace that breaks at the outbox]).

@@ -19,8 +19,8 @@ decisions are recorded as ADRs, *these docs are updated*, and the sprint is tagg
 |s07 |Documentation |This site: role-based guides, domain model, failure stories with live drills, runbooks |done
 |s08 |Payments |payment-service commanded by order-service (ADR-0009): authorize before confirming, capture at dispatch, void on cancellation; idempotency keys per provider call; unknown outcomes resolved, never declined; a double-entry ledger the database keeps balanced; three new failure stories |done
 |s09 |Returns |Returns in order-service (ADR-0010): within 14 days of delivery, never more than was bought (a database-enforced counter per order line); refund when the goods arrive back, never more than was captured; restock idempotent by return; three new failure stories |done
-|s10 |Observability |Distributed tracing, dashboards, alerts |next
-|s11 |Packaging |Container images, one-command stack, Kubernetes manifests, Kafka authentication |planned
+|s10 |Observability |One trace per order through HTTP, Kafka and the outbox (OpenTelemetry, Jaeger); Prometheus scraping with its own Keycloak client; Grafana dashboard and four alert rules as code; the drill's trace exposed a relay attempt blocking a minute, now capped at the send timeout; one new failure story |done
+|s11 |Packaging |Container images, one-command stack, Kubernetes manifests, Kafka authentication, alert delivery |next
 |s12+ |Optional |Marketplace (sellers, orders split per seller, split payments and payouts); promotions; back-in-stock notifications |optional
 |===
 
@@ -28,10 +28,10 @@ A web console (customer shop and back-office saga view) is built in parallel in
 {ui-repo}[ff-ecommerce-ui] (see xref:developer:web-console.adoc[Web console] and
 xref:developer:ui-integration.adoc[API and login for the UI]).
 
-== Next: s10 Observability
+== Next: s11 Packaging
 
-Thirteen failure stories, and each one ends with "how would anyone notice in production?". s10
-answers it with the tools of a real operation: one trace id following an order through HTTP and
-Kafka across all five services, Prometheus scraping the outbox and dead-letter metrics that exist
-since s06, dashboards per saga step, and the alert rules written down in the operations guide turned
-into real ones.
+Today the services run from an IDE and the infrastructure from compose. s11 makes the whole system
+one artefact per service: container images built by the Maven build, a compose file that starts
+everything with one command, Kubernetes manifests with probes and configuration, Kafka with
+authentication instead of open listeners, and Alertmanager so the four alert rules reach a person
+instead of a web page.

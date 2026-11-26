@@ -1,0 +1,164 @@
+= Observability: traces, metrics, alerts
+:description: Follow one order through five services, see whether the saga is moving, and know when it is not.
+
+Two questions come up whenever something looks wrong:
+
+* *Where did this one order stop, and why?* A trace in Jaeger shows every step of one order, across
+  HTTP, the outbox, Kafka and all five services, with its timing and errors.
+* *Is the system as a whole moving?* Metrics in Prometheus, shown in Grafana, say whether events are
+  leaving the outboxes, whether consumers keep up, and whether requests fail. Alert rules turn the
+  important ones into a red light.
+
+The design behind it is xref:architecture:adr/0011-observability.adoc[ADR-0011].
+
+[cols="1,1,3"]
+|===
+|Tool |Address |Use it for
+
+|Jaeger |http://localhost:16686 |One order end to end: which service, which event, how long, which step failed.
+|Prometheus |http://localhost:9090 |Which services are scraped (`/targets`), which alerts fire (`/alerts`), ad-hoc queries.
+|Grafana |http://localhost:3000 |The dashboard "ecommerce: overview": health of services and of the event flow over time.
+|===
+
+== Start it
+
+The three tools are an optional compose profile; the services need nothing extra.
+
+[source,bash]
+----
+docker compose --profile observability up -d
+----
+
+[cols="1,3"]
+|===
+|Container |Notes
+
+|`jaeger` |Jaeger v2, all in one, traces in memory (gone after a restart). Services send spans over OTLP to `localhost:4318`.
+|`prometheus` |Runs on the host network, so `localhost` means the same to it as to the services, including the Keycloak address in its token. Configuration: {code-tree}/infra/prometheus[`infra/prometheus`].
+|`grafana` |No login locally. Data sources and the dashboard are files in {code-tree}/infra/grafana[`infra/grafana`]; changes made in the UI are lost on restart.
+|===
+
+Without the profile, the services run as before: a span that cannot be exported is dropped.
+
+image::prometheus-targets.png[Prometheus targets: the gateway on its management port, five services scraped with a token, all up]
+
+== Follow one order: from its database row to its trace
+
+Every outbox row keeps the trace context of the work that wrote it (`traceparent`). Its second part is
+the trace id, which is also the address of the trace in Jaeger:
+
+[source,bash]
+----
+TRACE=$(docker compose exec -T -e PGPASSWORD=order_service postgres psql -h localhost -U order_service -d order_db -tAc \
+  "SELECT split_part(traceparent,'-',2) FROM outbox_messages WHERE message_key='$ORDER' ORDER BY id LIMIT 1")
+echo "http://localhost:16686/trace/$TRACE"
+----
+
+(In the drills terminal, `trace $ORDER` prints the same link.) The same id appears in every log line
+written for that order, in every service: a line in a log leads to the trace, and the trace to the lines.
+
+image::jaeger-order-trace.png[One order as one trace: gateway, order-service, outbox, Kafka, catalog, payment, shipping]
+
+How to read it, top to bottom:
+
+[cols="2,3"]
+|===
+|Span |Means
+
+|`gateway http post /api/v1/orders` |The customer's request, through the gateway.
+|`order-service security filterchain`, `authenticate bearertoken` |Token check (ADR-0008).
+|`outbox append order.order-placed` |The event is written, in the request's transaction. The request ends here.
+|`outbox relay order.order-placed` |The relay publishes it, later and on another thread, in the same trace.
+|`order.lifecycle send` → `catalog-service order.lifecycle process` |Kafka: the producer and each consumer.
+|`… payment.commands send` → `payment-service …` |order-service commands payment (ADR-0009).
+|`… → Apache Kafka: <cluster id>` |A message nobody in the trace consumed (for example `catalog.stock`). Not an error.
+|===
+
+Errors show as a red ⚠ on the span, with the exception in its tags. The search page finds traces by
+service and operation, or by tag (`error=true`, `topic=payment.commands`).
+
+A failed step looks just as clear. Here the product was out of stock: catalog answers
+`stock-reservation-failed`, and the saga's compensation runs inside the same trace:
+
+image::jaeger-trace-stock-out.png[A trace of an order cancelled for lack of stock: stock-reservation-failed, then order-cancelled]
+
+=== Which service talks to which
+
+Jaeger's *System Architecture* tab draws the calls it saw in traces. The pairs `order ⇄ payment` are
+the commands and answers of the payment saga; the loops are spans inside one service (outbox append,
+relay, send).
+
+image::jaeger-dependencies.png[Service dependencies drawn from traces]
+
+== The dashboard
+
+"ecommerce: overview" is Grafana's home page. Two rows:
+
+*Services:* scrape status per service (`UP` / `DOWN`), requests per second, server errors (5xx) per
+second, latency p95, heap.
+
+image::grafana-overview.png[Grafana: all six services up, request rate, latency and heap]
+
+*Messaging (outbox → Kafka → listeners):*
+
+[cols="2,3"]
+|===
+|Panel |Healthy
+
+|Outbox: oldest unpublished event |Near 0. Climbing means events are written but do not reach Kafka.
+|Outbox: events waiting |Near 0.
+|Dead letters (10 min) |No data, or 0. Any value is a step that did not happen.
+|Events relayed / s, by topic |Follows the traffic; a `… failed` line means sends fail.
+|Messages handled / s, by listener |Follows the traffic; a `… failed` line means a consumer throws.
+|===
+
+== Alerts
+
+Four rules in {code-tree}/infra/prometheus/rules/ecommerce.yml[`infra/prometheus/rules/ecommerce.yml`],
+shown on http://localhost:9090/alerts. What each means and what to do:
+xref:metrics.adoc[Metrics and alerts].
+
+[cols="1,2,2"]
+|===
+|Alert |Fires when |First look
+
+|`ServiceDown` |a target fails its scrape for 1 minute |Prometheus `/targets`: the error says why (not running, `401`, `403`).
+|`OutboxStuck` |a service's oldest unpublished event is older than 30 s, for 1 minute |`last_error` of the waiting rows in its `outbox_messages`; Kafka reachable?
+|`DeadLetters` |any dead letter in the last 10 minutes |xref:dead-letters.adoc[Runbook: dead letters].
+|`HighServerErrorRate` |more than 5% of a service's requests fail with 5xx, for 5 minutes |Jaeger, `error=true` for that service.
+|===
+
+Prometheus shows alerts; it does not send them anywhere yet. Routing them to people (Alertmanager,
+chat, paging) belongs to packaging (s11).
+
+== Kafka down, as the tools show it
+
+From xref:developer:try-it/failure-drills.adoc#_14_a_trace_that_breaks_at_the_outbox[drill 14]: Kafka stopped
+for about two minutes while an order was placed.
+
+The order was accepted; its event waited in the outbox. The age climbed, `OutboxStuck` went pending
+after 30 s and firing a minute later, and both dropped back by themselves when Kafka returned:
+
+image::grafana-kafka-down.png[Grafana during the outage: outbox age climbing to minutes, then back to zero]
+
+image::prometheus-outbox-stuck-firing.png[Prometheus: OutboxStuck firing]
+
+The order's trace shows the outage from the inside: every failed relay attempt, then the one that
+went through, all in the customer's original trace. What it revealed is
+xref:architecture:consistency/outbox-trace.adoc[failure story 14].
+
+image::jaeger-trace-kafka-down-fixed.png[One trace through a Kafka outage: six failed relay attempts of 5 s, then the saga continues]
+
+== Who may read what
+
+[cols="2,2,2"]
+|===
+|Endpoint |Who |How
+
+|`/actuator/health` |anyone |probes
+|`/actuator/prometheus` (five services) |role `monitoring` or `admin` |Prometheus logs in as the Keycloak client `prometheus` (client credentials) and refreshes its token itself
+|`/actuator/metrics` |role `admin` |operators with `curl`
+|gateway `/actuator/*` |anyone who can reach port 8089 |the gateway has no security of its own, so its actuator is on a management port that clients never see
+|===
+
+A `monitoring` token opens the metrics and nothing else: no order, no customer, no back office.

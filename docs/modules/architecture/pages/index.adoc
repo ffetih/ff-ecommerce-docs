@@ -108,6 +108,10 @@ asked again, never guessed (xref:adr/0009-payments-driven-by-order-service.adoc[
 conditional updates and check constraints, so concurrent requests cannot exceed them
 (xref:adr/0010-returns-in-order-service.adoc[ADR-0010]).
 
+|Observability |OpenTelemetry traces through HTTP, Kafka and the outbox into Jaeger; Prometheus scrapes
+with its own token; Grafana dashboard and alert rules as code
+(xref:adr/0011-observability.adoc[ADR-0011]).
+
 |Security |Every service is a resource server with deny-by-default rules
 (xref:adr/0008-security.adoc[ADR-0008], xref:security.adoc[security model]).
 |===
@@ -116,7 +120,8 @@ conditional updates and check constraints, so concurrent requests cannot exceed 
 
 . *Consistent under failure.* Stock, orders and parcels never disagree for good, whatever the order
   or the number of times messages arrive, and no customer is charged twice or for nothing.
-  xref:consistency/index.adoc[Thirteen failure stories] show how.
-. *Visible when stuck.* A step that cannot happen is measured, not silently lost
-  (xref:operations:metrics.adoc[metrics]).
+  xref:consistency/index.adoc[Fourteen failure stories] show how.
+. *Visible when stuck.* A step that cannot happen is measured, not silently lost, and alerted on
+  (xref:operations:metrics.adoc[metrics and alerts]); one order can be followed through every service
+  in a single trace (xref:operations:observability.adoc[observability]).
 . *Secure by default.* An endpoint nobody listed is closed.
