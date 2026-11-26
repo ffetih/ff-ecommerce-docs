@@ -1,36 +1,39 @@
 = Web console (ff-ecommerce-ui)
-:description: The React + TypeScript storefront and back-office console, how it meets the backend contract, and how its Playwright E2E suites work.
+:description: The React + TypeScript storefront and back-office console, how it meets the backend contract through s12, and how its Playwright E2E suites work.
 
 The web console lives in a companion repository, {ui-repo}[ff-ecommerce-ui], built with React 19,
 TypeScript 5.8, Vite 6, TanStack Query 5, `oidc-client-ts`, Vitest and Playwright. It implements
 the browser contract in xref:ui-integration.adoc[API and login for the UI] for both shoppers
-(`customer`) and back-office operators (`admin`).
+(`customer`) and back-office operators (`admin`) through `s12` (k3d + Flux).
 
 == Structure by bounded context
 
-The source tree mirrors the backend's contexts so each new backend sprint plugs in as one feature
-slice under `src/features/`:
+The source tree mirrors the backend's contexts so each backend sprint plugs in as a self-contained
+feature slice under `src/features/`:
 
 [source]
 ----
 ff-ecommerce-ui/
-├── vite.config.ts          # /api -> :8080 proxy (strips Origin/Referer)
-├── playwright.config.ts    # Projects: 'ui' (CI, mocked) and 'live'
+├── Dockerfile              # Multi-stage unprivileged Nginx image with runtime env injection
+├── docker/                 # nginx.conf.template (/api proxy + SPA fallback) & 30-runtime-env.sh
+├── vite.config.ts          # /api -> gateway proxy (IPv4-first DNS, strips Origin/Referer)
+├── playwright.config.ts    # Projects: 'ui' (CI, mocked) and 'live' (k3d/Flux or Compose)
 ├── e2e/
 │   ├── fixtures/           # Mock OIDC PKCE & live Keycloak helpers
-│   ├── ui/                 # Fast browser contract tests (no Docker)
-│   └── live/               # Full-stack smoke suite against local stack
+│   ├── ui/                 # Fast browser contract tests (no cluster/Docker needed)
+│   └── live/               # Full-stack smoke suite against live k3d/Flux cluster
 └── src/
     ├── app/                # Shell, navigation, routes (/callback, /admin/*)
-    ├── shared/             # RFC 9457 httpClient, trace log, <dialog>, tables
+    ├── shared/             # runtimeConfig, W3C traceparent, httpClient, CopyButton, <dialog>, tables
     └── features/
-        ├── auth/           # oidc-client-ts (in-memory), ProtocolInspector
+        ├── auth/           # oidc-client-ts (in-memory), ProtocolInspector + observability links
         ├── catalog/        # Storefront + Admin catalog, prices & stock
-        ├── cart/           # Cart + per-attempt Idempotency-Key
+        ├── cart/           # Cart + per-attempt Idempotency-Key + Jaeger trace link
         ├── customer/       # /me onboarding + Admin customer directory
         ├── orders/         # Order detail, SagaTimeline, polling & 202 cancel
-        ├── payments/       # Simulated cardToken options & paymentStatus
-        └── shipping/       # Admin orders, shipments & reservations
+        ├── payments/       # Simulated cardToken options (incl. tok_refund_fails) & paymentStatus
+        ├── returns/        # s09 return requests, returnedUnits clamping, admin receive/reject & refund polling
+        └── shipping/       # Admin orders, shipments, reservations, direct return lookup & cluster links
 ----
 
 == How the console honours backend guarantees
@@ -40,15 +43,17 @@ ff-ecommerce-ui/
 |Guarantee |Implementation in `ff-ecommerce-ui`
 
 |Same-origin API (no CORS)
-|`vite.config.ts` proxies `/api/*` to `http://localhost:8080` (`VITE_GATEWAY_URL`) and removes
-browser `Origin` and `Referer` headers on forwarded requests so the backend keeps deny-by-default
-without CORS rules.
+|`vite.config.ts` (and `docker/nginx.conf.template` in containers) proxies `/api/*` to the gateway
+(`http://shop.localtest.me:8888` by default for k3d/Flux, or `http://localhost:8080` via
+`npm run dev:compose`), prefers IPv4 DNS for `*.localtest.me` on WSL2, and removes browser
+`Origin` and `Referer` headers so backend deny-by-default rules stay intact without CORS.
 
 |Authorization Code + PKCE (`shop`)
-|`src/features/auth/authContext.tsx` configures `oidc-client-ts` `UserManager` against
-`http://localhost:8180/realms/ecommerce` with `client_id: 'shop'`, `response_type: 'code'`,
-`scope: 'openid'`, `redirect_uri: '/callback'` and `post_logout_redirect_uri: '/'`. There is no
-password form and no `ecommerce-dev` usage.
+|`src/features/auth/authContext.tsx` configures `oidc-client-ts` `UserManager` against the
+configured authority (`http://keycloak.localtest.me:8888/realms/ecommerce` by default, or
+`http://localhost:8180/realms/ecommerce` in Compose mode) with `client_id: 'shop'`,
+`response_type: 'code'`, `scope: 'openid'`, `redirect_uri: '/callback'` and
+`post_logout_redirect_uri: '/'`. There is no password form and no `ecommerce-dev` usage.
 
 |In-memory tokens & no expired calls
 |`userStore` uses `InMemoryWebStorage` (never `localStorage`). Before every request, `httpClient.ts`
@@ -58,9 +63,9 @@ Single-use callback codes are deduplicated across React `StrictMode` double effe
 
 |Idempotent checkout & payments
 |`CartProvider` stores cart items, the selected `cardToken` (`tok_ok`, `tok_decline`, `tok_slow`,
-`tok_capture_fails`) and the active `Idempotency-Key` UUID in `sessionStorage` so a guest cart
-survives the Keycloak redirect. Editing lines, quantities or `cardToken` rotates the key
-automatically; retrying after `503 Retry-After` reuses the exact key; `200` +
+`tok_capture_fails`, `tok_refund_fails`) and the active `Idempotency-Key` UUID in `sessionStorage`
+so a guest cart survives the Keycloak redirect. Editing lines, quantities or `cardToken` rotates
+the key automatically; retrying after `503 Retry-After` reuses the exact key; `200` +
 `Idempotent-Replayed: true` is surfaced explicitly, and mixed currencies are blocked before submission.
 
 |Asynchronous saga, payments & cancellation
@@ -70,22 +75,43 @@ after 30 seconds with a non-error "Still processing" banner. Slow authorizations
 payment"; capture failures surface an `OVERDUE` alert for operations. Cancelling a `CONFIRMED` order
 opens a native `<dialog>`, surfaces `202 Accepted`, and polls until `CANCELLED` (`VOIDED`) or `SHIPPED`.
 
-|Protocol Inspector
-|A collapsible developer panel in the top bar shows decoded JWT claims (`sub`, `roles`, `aud`,
-`exp`, client flow) alongside a live log of API calls with status codes, `Idempotency-Key`,
-`Idempotent-Replayed`, `Retry-After`, and RFC 9457 `ProblemDetail` payloads.
+|Returns & refunds (`s09`)
+|`OrderReturnsSection` loads `+GET /api/v1/orders/{id}/returns+` on `DELIVERED` orders, shows the
+"Request return" action only when `paymentStatus` is `CAPTURED`, displays per-SKU `returnedUnits`,
+clamps the quantity picker to remaining units, generates a fresh `Idempotency-Key` when the form
+opens, shows `422` business-rule details verbatim, polls `RECEIVED -> REFUNDED` or `REFUND_FAILED`,
+surfaces `REFUND_FAILED` alerts, and gives admins **Mark received** and **Reject** actions (both on
+order detail and via direct Return UUID lookup in Operations).
+
+|Distributed tracing & observability (`s10`, `s12`)
+|`httpClient.ts` attaches a sampled W3C `traceparent` header (`00-<traceId>-<spanId>-01`) to every
+API call so browser requests, the gateway, outbox rows, Kafka records, and downstream services
+share one Jaeger trace. Confirmation banners, `ProblemBanner`, and the `ProtocolInspector` expose
+one-click **Open in Jaeger** links alongside quick links to Grafana, Prometheus, Alertmanager, and
+Mailpit.
+
+|Immutable container packaging (`s11`, `s12`)
+|A multi-stage `Dockerfile` (`node:22-alpine` -> `nginxinc/nginx-unprivileged:1.27-alpine`) serves
+the built SPA on port `8080`, exposes `/healthz`, proxies `/api/*` same-origin, and writes
+`/env-config.js` (`window.__APP_CONFIG__`) from container environment variables at startup so one
+image runs unchanged in Compose or Kubernetes.
 |===
 
 == Running locally
 
-Start the backend stack first (xref:local-run.adoc[local run]). If Keycloak was started before the
-`shop` client was added to `ecommerce-realm.json`, recreate it once (`docker compose up -d
---force-recreate keycloak`).
+Against the **k3d + Flux** cluster (`s12`, `*.localtest.me:8888`, default):
 
 [source,bash]
 ----
 npm install
-npm run dev                  # http://localhost:5173
+npm run dev                  # http://localhost:5173 -> shop.localtest.me:8888 / keycloak.localtest.me:8888
+----
+
+Against **Docker Compose** (`s11`, `localhost:8080` / `localhost:8180`):
+
+[source,bash]
+----
+npm run dev:compose          # http://localhost:5173 -> localhost:8080 / localhost:8180
 ----
 
 Sign in from the top bar with `alice` / `alice`, `bob` / `bob`, or `admin` / `admin`.
@@ -100,28 +126,33 @@ The UI repository separates unit tests from two Playwright browser suites:
 
 |Unit & component (Vitest)
 |`npm run test`
-|JWT decoding, `oidc-client-ts` config & StrictMode callback deduplication, RFC 9457 `httpClient`,
-`Idempotency-Key` rotation, `SagaTimeline`, catalog off-sale state, native `<dialog>` accessibility.
+|JWT decoding, runtime config & k3d/Compose overrides, `oidc-client-ts` config & StrictMode
+callback deduplication, W3C `traceparent` & RFC 9457 `httpClient`, `Idempotency-Key` rotation,
+`s09` return eligibility/quota helpers, `SagaTimeline`, catalog off-sale state, `CopyButton`, and
+native `<dialog>` accessibility.
 
 |Browser E2E (`ui`, Playwright)
 |`npm run test:e2e`
-|Runs in headless Chromium with mocked `/api` and OIDC routes (no Docker needed; runs on every push
-and PR in GitHub Actions). Verifies anonymous catalog headers, real `oidc-client-ts` PKCE `S256`
-redirect + guest cart preservation, `503 Retry-After` & `200 Idempotent-Replayed`, `PLACED ->
-CONFIRMED` polling, `202` cancellation dialog (`Escape` & submit), role boundaries, single-row admin
-navigation without overflow, and Protocol Inspector.
+|Runs in headless Chromium with mocked `/api` and OIDC routes (no cluster or Docker needed; runs on
+every push and PR in GitHub Actions). Verifies anonymous catalog headers, real `oidc-client-ts`
+PKCE `S256` redirect + guest cart preservation, `503 Retry-After` & `200 Idempotent-Replayed`,
+`PLACED -> CONFIRMED` polling, `202` cancellation dialog, `s09` partial return clamping/`422`/receive/reject/refund
+polling, `s10` W3C `traceparent` + Jaeger links, role boundaries, single-row admin navigation without
+overflow, and Protocol Inspector.
 
 |Live full-stack smoke (`live`, Playwright)
 |`npm run test:e2e:live`
-|Runs serially against the real local stack (Keycloak `:8180`, Gateway `:8080`, services, Kafka,
-PostgreSQL): `admin` creates a unique SKU and books stock; anonymous guest adds it, logs in as
-`alice` via Keycloak PKCE and completes `PLACED -> CONFIRMED -> DELIVERED`; `alice` tests `202`
-async cancellation and `bob` verifies `404` anti-enumeration.
+|Runs serially against the real k3d/Flux cluster (`keycloak.localtest.me:8888`,
+`shop.localtest.me:8888`, all five services, Kafka, PostgreSQL, Jaeger): `admin` creates a unique
+SKU and books stock; anonymous guest adds 2 units, logs in as `alice` via Keycloak PKCE and
+completes `PLACED -> CONFIRMED -> DELIVERED`; `alice` requests partial returns, `admin` marks one
+received (`RECEIVED -> REFUNDED` + catalog restocked) and rejects the other (quota released);
+`alice` tests `202` async cancellation (`VOIDED`) and `tok_decline` (`DECLINED`), `bob` verifies
+`404` anti-enumeration, and Protocol Inspector exposes live Jaeger trace links.
 |===
 
 [NOTE]
 ====
-Sprint alignment: `ff-ecommerce-ui` covers the storefront and back-office flows through `s08`
-(including `cardToken` selection, `paymentStatus` tracking, the `shop` PKCE client, and both
-Playwright suites). Returns (`s09`) will plug in as a new `src/features/returns/` slice.
+Sprint alignment: `ff-ecommerce-ui` covers the storefront, back-office saga, payments, returns,
+W3C tracing / observability links, container packaging, and k3d + Flux integration through `s12`.
 ====

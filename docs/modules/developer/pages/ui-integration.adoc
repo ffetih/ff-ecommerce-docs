@@ -16,7 +16,8 @@ deny-by-default stays untouched (a CORS preflight would otherwise reach the serv
 export default defineConfig({
   server: {
     port: 5173,
-    proxy: { '/api': 'http://localhost:8080' },
+    // k3d + Flux (s12): http://shop.localtest.me:8888  |  Docker Compose (s11): http://localhost:8080
+    proxy: { '/api': 'http://shop.localtest.me:8888' },
   },
 })
 ----
@@ -32,7 +33,7 @@ the console exchanges for tokens (for example with `oidc-client-ts`).
 |===
 |Setting |Value
 
-|Authority |`http://localhost:8180/realms/ecommerce`
+|Authority |`http://keycloak.localtest.me:8888/realms/ecommerce` (k3d + Flux) or `http://localhost:8180/realms/ecommerce` (Compose)
 |Client |`shop` (public, standard flow, PKCE `S256`)
 |Redirect URI |`http://localhost:5173/*`
 |Web origins |`http://localhost:5173` (the browser calls Keycloak's token endpoint directly)
@@ -71,7 +72,8 @@ Two browser-side details that matter in practice:
 
 The order body carries the payment method as `cardToken`. In this project the provider is
 simulated and the token chooses its answer: `tok_ok` (approved), `tok_decline`, `tok_slow` (answers
-late), `tok_capture_fails` (the money cannot be taken at dispatch). A real shop gets the token from
+late), `tok_capture_fails` (the money cannot be taken at dispatch), `tok_refund_fails` (captured
+normally, but refunds are declined when a return is received). A real shop gets the token from
 the provider's payment form; card numbers never reach the backend.
 
 Every order needs an `Idempotency-Key` header (a UUID). Create the key *when the order form opens*,
