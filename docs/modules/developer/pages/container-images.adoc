@@ -1,0 +1,184 @@
+= Container images with Jib
+:description: How each service becomes an image without a Dockerfile, what is inside it, and how to build, inspect, change and publish it.
+
+Every service is shipped as a container image built by https://github.com/GoogleContainerTools/jib[Jib],
+a Maven plugin. There is no Dockerfile in the repository: the parent POM describes the image once, and
+each service inherits it. The decision and its alternatives are in
+xref:architecture:adr/0012-packaging.adoc[ADR-0012].
+
+== The idea: an image is a stack of layers
+
+A container image is a stack of read-only layers, each a tar of files, plus a little configuration
+(entrypoint, user, environment). Docker and registries store and transfer each layer once, identified
+by its content: a layer that did not change is not built, pushed or pulled again.
+
+A Spring Boot service is mostly code that never changes between two commits (Spring, Hibernate, Kafka,
+Jackson) and a little that does (our classes). Jib puts them in different layers, ordered from least
+to most often changed:
+
+[source]
+----
+ ┌────────────────────────────────────────────┐
+ │ classes          our compiled code         │  ← changes on almost every commit: kilobytes
+ │ resources        application.yml, Flyway   │  ← changes sometimes
+ │ snapshot deps    messaging, security,      │  ← our own shared modules (-SNAPSHOT)
+ │                  events                    │
+ │ dependencies     Spring, Hibernate, Kafka, │  ← changes when a version changes: tens of MB
+ │                  Jackson, drivers …        │
+ ├────────────────────────────────────────────┤
+ │ eclipse-temurin:25-jre   (Ubuntu + JRE)    │  ← the base image, shared by all six services
+ └────────────────────────────────────────────┘
+----
+
+After a code change only the top layer is new, so a rebuild takes seconds and a push sends a few
+kilobytes. The six services share the base image and most dependency layers, so a machine stores them
+once.
+
+A Dockerfile can do the same, but only if it is written carefully (copy the dependencies first, the
+classes last, and keep it in step with the build). Jib knows the Maven project and does it by itself.
+
+[cols="1,2,2"]
+|===
+| |Jib |A Dockerfile
+
+|Layering by change frequency |automatic |by hand, per service
+|Needs Docker to build and push |no (`jib:build` talks to the registry directly) |yes
+|Fat jar inside |no: classes and jars as they are |usually the fat jar, one big layer
+|Reproducible |yes: same inputs, same digest |only with extra care
+|Arbitrary build steps (`RUN apt-get …`) |no |yes
+|===
+
+== Where it is configured
+
+{code-tree}/pom.xml[The parent POM] configures `jib-maven-plugin` for every module, switched off by a
+property; the six services switch it on:
+
+[source,xml]
+----
+<!-- parent pom.xml -->
+<jib.skip>true</jib.skip>
+<image.registry>ghcr.io/ffetih/ff-ecommerce</image.registry>
+<image.tag>${project.version}</image.tag>
+
+<!-- each service's pom.xml -->
+<jib.skip>false</jib.skip>
+----
+
+So a Jib goal run from the repository root builds exactly six images, and skips `messaging`,
+`security`, `events`, `test-support` and `e2e-tests`. A new service gets an image by setting the same
+property.
+
+[cols="1,2,3"]
+|===
+|Setting |Value |Why
+
+|`from.image` |`eclipse-temurin:25-jre` |The Java 25 runtime only: no compiler, no build tools in production.
+|`to.image` |`ghcr.io/ffetih/ff-ecommerce/<artifactId>:<image.tag>` |One repository per service, under the project's namespace in GitHub Container Registry.
+|`container.user` |`1000:1000` |Not root: a process that escapes the JVM cannot change the image's files.
+|`container.jvmFlags` |`-XX:MaxRAMPercentage=75` |The heap is sized from the container's memory limit (512 MB in compose), not from the host's 16 GB, leaving a quarter for metaspace, threads and buffers.
+|`container.labels` |`org.opencontainers.image.source`, `title`, `version` |GHCR links the package to the repository; `docker inspect` shows what an image is.
+|===
+
+== Build an image
+
+[source,bash]
+----
+./mvnw -q package -DskipTests jib:dockerBuild                        # all six, into the local Docker
+./mvnw -q -pl order-service -am package -DskipTests jib:dockerBuild  # just one (with its shared modules)
+./mvnw -q package -DskipTests jib:buildTar                           # target/jib-image.tar, no Docker needed
+docker load -i order-service/target/jib-image.tar                    # … and load it later
+----
+
+`package` must come first: Jib takes the compiled classes and the dependency jars from the build, not a
+fat jar. `jib:dockerBuild` hands the finished image to the `docker` command, which must be on the
+`PATH` (in WSL it is).
+
+The result:
+
+[source,bash]
+----
+docker images 'ghcr.io/ffetih/ff-ecommerce/*'
+----
+
+[NOTE]
+====
+`CREATED` says *56 years ago*. That is not a bug: for reproducible images Jib sets the creation time
+and every file's time to the Unix epoch (1 January 1970). Two builds of the same commit therefore have
+the same digest, and a registry sees that nothing changed.
+====
+
+== Look inside
+
+[source,bash]
+----
+IMG=ghcr.io/ffetih/ff-ecommerce/order-service:0.1.0-SNAPSHOT
+
+docker inspect $IMG --format '{{.Config.User}} | {{json .Config.Entrypoint}}'
+docker history $IMG --format '{{.Size}}\t{{.CreatedBy}}'
+docker run --rm --entrypoint ls $IMG /app
+----
+
+* The entrypoint is `java -XX:MaxRAMPercentage=75 -cp @/app/jib-classpath-file <main class>`. Jib
+  found the `@SpringBootApplication` class itself; the classpath is a file inside the image
+  (`/app/jib-classpath-file`), because it is long.
+* `/app` holds `libs/` (the jars), `resources/` and `classes/`: the layers above, as directories.
+* `docker history` lists the layers from the top: the first lines are small (our classes,
+  resources), then the snapshot modules, then the dependencies, then the base image.
+
+To see a layer change, change one line of code, build again and compare `docker history`: only the
+`classes` layer has a new size and digest.
+
+== Run one image on its own
+
+The compose file is the normal way (xref:local-run.adoc#_or_the_whole_system_in_containers[the whole
+system in containers]). To try a single image against the running infrastructure, join compose's
+network and pass the same environment variables:
+
+[source,bash]
+----
+docker run --rm --network ecommerce_default -p 8082:8082 \
+  -e CUSTOMER_DB_URL=jdbc:postgresql://postgres:5432/customer_db \
+  -e ISSUER_URI=http://localhost:8180/realms/ecommerce \
+  -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWKSETURI=http://keycloak:8080/realms/ecommerce/protocol/openid-connect/certs \
+  ghcr.io/ffetih/ff-ecommerce/customer-service:0.1.0-SNAPSHOT
+----
+
+The image contains no configuration of its own beyond `application.yml`: everything that differs
+between a laptop, compose and Kubernetes is an environment variable
+(xref:operations:configuration.adoc#_containers_compose_profile_app[the list]).
+
+== Change something
+
+* *A different JVM flag for one service:* add a `jib-maven-plugin` block with its own
+  `<container><jvmFlags>` to that service's `pom.xml`; it replaces the parent's list.
+* *A different base image* (for example a smaller, distroless one): change `from.image` in the parent.
+  Check the health check still works: compose's check uses `bash`, which distroless images do not have.
+* *Another registry or tag:* `-Dimage.registry=…` and `-Dimage.tag=…` on the command line; extra tags
+  with `-Djib.to.tags=a,b`.
+
+== How CI publishes
+
+On a push to `main`, after every test has passed, the CI job logs in to GHCR with its own token and
+runs:
+
+[source,bash]
+----
+./mvnw -B -ntp -DskipTests -Dimage.tag=${GITHUB_SHA::7} -Djib.to.tags=main package jib:build
+----
+
+`jib:build` pushes straight to the registry, without Docker. Each image gets two tags: the commit's
+short SHA (immutable, what a cluster deploys) and `main` (moves with every push). Pull requests and
+sprint branches only test; an image exists only for code that passed on `main`.
+
+== When it fails
+
+[cols="2,3"]
+|===
+|Message |Means
+
+|`Cannot run program "docker"` |`jib:dockerBuild` needs the Docker CLI; use `jib:buildTar`, or run it in WSL.
+|`Unauthorized` / `denied` on `jib:build` |No login for the registry (`docker login ghcr.io`), or a token without `write:packages`.
+|`docker-credential-desktop … not found` |A Windows Docker Desktop setting copied into WSL's `~/.docker/config.json`; remove the `credsStore` line there.
+|`toomanyrequests` pulling `eclipse-temurin` |Docker Hub's limit for anonymous pulls; log in to Docker Hub, or wait. Jib caches the base image in `~/.cache/google-cloud-tools-java/jib`.
+|`Main class was not found` |The module has no `@SpringBootApplication` class, so it is not a service: its `jib.skip` should stay `true`.
+|===

@@ -6,6 +6,7 @@
 |Page |For when you want to
 
 |xref:local-run.adoc[Local run and tests] |start infrastructure and services, run the three levels of tests
+|xref:container-images.adoc[Container images (Jib)] |build, inspect and change the services' images, and see how CI publishes them
 |xref:codebase.adoc[Codebase map] |know where a piece of code belongs
 |xref:api.adoc[API reference] |call an endpoint: who may, what it returns
 |xref:ui-integration.adoc[API and login for the UI] |understand the contract a browser client must follow

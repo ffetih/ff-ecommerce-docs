@@ -59,7 +59,8 @@ On WSL with services running in the Windows IDE, set `networkingMode=mirrored` i
 
 == Or: the whole system in containers
 
-Each service is also an image (Jib, no Dockerfile; xref:architecture:adr/0012-packaging.adoc[ADR-0012]).
+Each service is also an image (Jib, no Dockerfile; how they are built and what is inside:
+xref:container-images.adoc[container images]).
 The `app` profile runs all six next to the infrastructure:
 
 [source,bash]

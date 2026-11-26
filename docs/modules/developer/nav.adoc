@@ -1,6 +1,7 @@
 .Developer
 * xref:index.adoc[Overview]
 * xref:local-run.adoc[Local run and tests]
+* xref:container-images.adoc[Container images (Jib)]
 * xref:codebase.adoc[Codebase map]
 * xref:api.adoc[API reference]
 * xref:ui-integration.adoc[API and login for the UI]

@@ -61,6 +61,8 @@ UI, or the services when run from the IDE.
 
 == Implementation notes (s11)
 
+How to build, inspect and change the images: xref:developer:container-images.adoc[Container images with Jib].
+
 * *Only the services build an image.* The parent POM configures Jib for every module but sets
   `jib.skip=true`; the six services set it to `false`. So `jib:dockerBuild` from the root builds six
   images and skips the shared modules and the tests.
