@@ -31,3 +31,4 @@
 ** xref:adr/0010-returns-in-order-service.adoc[ADR-0010: Returns]
 ** xref:adr/0011-observability.adoc[ADR-0011: Observability]
 ** xref:adr/0012-packaging.adoc[ADR-0012: Packaging]
+** xref:adr/0013-kubernetes-gitops.adoc[ADR-0013: Kubernetes and GitOps]

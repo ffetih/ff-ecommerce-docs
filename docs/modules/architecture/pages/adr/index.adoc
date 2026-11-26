@@ -55,4 +55,8 @@ alternatives that were rejected. New records follow the xref:adr/0000-template.a
 |xref:adr/0012-packaging.adoc[ADR-0012]
 |Packaging with Jib images and a one-command compose stack
 |Accepted
+
+|xref:adr/0013-kubernetes-gitops.adoc[ADR-0013]
+|Kubernetes on k3d, kept in sync by Flux
+|Proposed
 |===

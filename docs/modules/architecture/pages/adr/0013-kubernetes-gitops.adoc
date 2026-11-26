@@ -1,0 +1,106 @@
+= ADR-0013: Kubernetes on k3d, kept in sync by Flux
+:description: How the system runs on Kubernetes, who installs what, how Kafka knows who is talking, and how a new image reaches the cluster without anyone running kubectl.
+
+* *Status:* Proposed
+* *Date:* 2026-11-26
+
+== Context
+
+Since s11 every service is an image in GHCR and compose starts the whole system with one command.
+Compose is a single machine's view: no self-healing beyond restarting a container, no rolling update,
+no declared desired state that something keeps true, and every component trusts every other one on
+the network. Kafka is the clearest case: any process that reaches port 9092 can read every topic and
+write commands into `payment.commands`.
+
+The next step is the shape a real installation has:
+
+* the whole system *declared* in Git and continuously made true in a cluster (GitOps), so that a
+  change is a commit and a rollback is a revert;
+* third-party components installed by their own operators, not by hand-written manifests;
+* every client of Kafka authenticated, and allowed only what it needs;
+* a new image on `main` reaching the cluster without anyone running `kubectl`;
+* alerts that reach a person.
+
+It has to fit on one laptop (WSL with about 16 GB), next to nothing else.
+
+== Decision
+
+*A local k3d cluster.* One k3d cluster `ff-ecommerce` (k3s in Docker), created by a script in the
+repository, with a recent Kubernetes version (Flux 2.10 needs 1.35+). k3s brings Traefik as ingress
+controller; the cluster is reached through k3d's load balancer on one host port, with a hostname per
+entry point (`*.localtest.me`, which resolves to 127.0.0.1): the gateway, Keycloak, Grafana, Jaeger,
+the mail catcher. Compose is stopped while the cluster runs; both use the same images.
+
+*Flux keeps the cluster equal to the repository.* `flux bootstrap github` installs Flux into the
+cluster and commits its own manifests to the code repository; from then on the cluster follows the
+`deploy/` folder of `main`. Nothing is applied by hand except the bootstrap.
+
+[source]
+----
+deploy/
+  clusters/local/       what Flux syncs: one Kustomization per layer, in dependency order
+  infrastructure/       operators and shared services (Helm releases and plain manifests)
+  apps/base/            the six services: Deployment, Service, probes, resources
+  apps/overlays/local/  this cluster: image tags, hostnames, Kafka and database credentials
+----
+
+*Third-party components are Helm releases; our services are Kustomize.* Flux's `HelmRelease` installs
+and upgrades what others maintain: the Strimzi operator, the CloudNativePG operator, and
+kube-prometheus-stack (Prometheus Operator, Prometheus, Alertmanager, Grafana). Our six services are
+plain YAML in a Kustomize base with an overlay per cluster: what we write, we read. Small things with
+no good chart (Keycloak in development mode, Jaeger all-in-one, Mailpit) are plain manifests too.
+
+*Kafka by Strimzi, with a user and ACLs per service.* A `Kafka` resource (KRaft, one node) with a
+listener that requires SCRAM-SHA-512. Every topic, including the dead-letter topics, is a
+`KafkaTopic` resource: topics are declared in Git, not created by whichever service starts first.
+Every service is a `KafkaUser` with ACLs for exactly what it does: order-service writes
+`payment.commands`, only payment-service reads it. Strimzi creates each user's password as a Secret;
+the service's Deployment reads it from there.
+
+*PostgreSQL by CloudNativePG.* One `Cluster`, with a database and a role per service, declared as
+resources, as the init scripts did for compose. Each service still owns its database (ADR-0002).
+
+*Keycloak with the same realm file.* The realm JSON that compose imports is turned into a ConfigMap
+by Kustomize, so there is one realm definition for compose, tests and the cluster. The issuer is
+Keycloak's public hostname; the services fetch keys and tokens from the internal Service, as in s11.
+
+*Observability as code, again.* The four alert rules become `PrometheusRule` resources, the scrape
+targets `ServiceMonitor` resources with the `prometheus` client's OAuth2 credentials, the dashboard a
+ConfigMap that Grafana loads. Alertmanager sends alerts to Mailpit, a local mail catcher with a web
+page: a firing alert arrives as an email.
+
+*New images arrive by commit, not by command.* CI tags each image also as `main-<run number>-<sha>`,
+which sorts. Flux's image automation watches GHCR, picks the newest tag, writes it into the overlay
+and commits that change to the repository; the commit is what deploys. The history of what ran when
+is the Git history.
+
+== Consequences
+
+* The cluster is reproducible: delete it, run the script, bootstrap, and Flux rebuilds everything.
+* A deployment is a commit and a rollback a revert; drift (a manual `kubectl edit`) is undone by Flux.
+* A service that is compromised can do only what its Kafka ACLs and database role allow.
+* The services need SASL settings for Kafka in the cluster, and must not create topics there; both
+  come from the overlay, so compose, the tests and the IDE are unchanged.
+* Flux needs write access to the repository (a deploy key) for image automation, and its commits
+  appear in the history.
+* Development passwords for the cluster live in the repository, as they do for compose. A real
+  cluster would encrypt them (SOPS with age, or an external secret store).
+* Memory: about 7 to 8 GB for everything; compose must be stopped.
+
+== Alternatives considered
+
+* *Argo CD instead of Flux.* Equally capable, with a richer UI. Flux is used here because it is
+  built from small controllers, works with Kustomize and Helm natively, and has image automation
+  built in; Argo CD was used in another project.
+* *Helm charts for our own services.* A chart is a package for others to install with parameters;
+  our services are installed by us, and plain YAML with overlays stays readable.
+* *Bitnami charts for Kafka, PostgreSQL and Keycloak.* Convenient for years, but their free images
+  have been reduced to a legacy repository; operators (Strimzi, CloudNativePG) manage the lifecycle
+  better anyway.
+* *Kafka with mutual TLS instead of SCRAM.* Stronger, and Strimzi supports it; SCRAM keeps the
+  clients' configuration to a user name and a password, which is enough to show authentication and
+  ACLs.
+* *kind or minikube.* Both work; k3d is already installed, starts fastest, and brings an ingress
+  controller and a load balancer.
+* *A Keycloak operator.* The production route, with a database of its own; for a development realm
+  imported from a file, a single Deployment is simpler and shows the same issuer handling.
