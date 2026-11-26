@@ -489,9 +489,23 @@ for i in 1 2 3 4; do ret $ORDER 1 & done; wait
 returns $ORDER
 ----
 
-Two requests get `201` with a return id, two get `422`: "Not that many units of … can still be
-returned: 2 ordered, some already returned". `returns` shows two returns `REQUESTED` and
-`returnedUnits` at 2. Which two win depends on timing; that exactly two win does not.
+In a run:
+
+[source]
+----
+order    = DELIVERED, payment CAPTURED
+stock    = {"onHand":8,"reserved":0,"available":8}
+return   -> 201 b42b68c5-dd19-483a-9b19-084c2bc986ab
+return   -> 201 fb8a9c82-30f6-466d-9a4f-1ca1e7036c22
+return   -> 422 Not that many units of DRILL-8964 can still be returned: 2 ordered, some already returned
+return   -> 422 Not that many units of DRILL-8964 can still be returned: 2 ordered, some already returned
+{"returns":[{"id":"fb8a9c82","status":"REQUESTED","refund":5.00},{"id":"b42b68c5","status":"REQUESTED","refund":5.00}],
+ "returnedUnits":{"DRILL-8964":2}}
+----
+
+Which two win depends on timing; that exactly two win does not. Running the four requests again, and
+again, gives four `422` each time: the counter stays at 2, the returns stay two. The limit holds in a
+race and over time alike.
 
 === Break it
 
@@ -521,10 +535,35 @@ send_event order.lifecycle $ORDER order.return-received \
 sleep 3; show $ORDER
 ----
 
-The two receives answer `200 RECEIVED` and `200 RECEIVED` (the second came after the first had
-committed) or one of them `409` (both at the same moment: the version decided). Either way: the stock's
-`onHand` rises by one, the return is `REFUNDED` with 5.00, and payment-service has one refund, one
-`REFUND` ledger transaction and `refunded_amount` 5.00. After the replayed event, `onHand` does not move.
+In a run:
+
+[source]
+----
+stock    = {"onHand":7,"reserved":0,"available":7}          # delivered, before the return
+receive  -> 200 RECEIVED
+receive  -> 409 Changed by another request at the same moment; read it again before retrying
+stock    = {"onHand":8,"reserved":0,"available":8}          # back once
+{"returns":[{"id":"9ad97472","status":"REFUNDED","refund":5.00}],"returnedUnits":{"DRILL-8931":1}}
+  status  | refunded_amount
+ CAPTURED |            5.00
+  kind   |       account       | amount
+ CAPTURE | PROVIDER_RECEIVABLE |   5.00
+ CAPTURE | SALES               |  -5.00
+ REFUND  | SALES               |   5.00
+ REFUND  | PROVIDER_RECEIVABLE |  -5.00
+  status  | amount
+ REFUNDED |   5.00
+stock    = {"onHand":8,"reserved":0,"available":8}          # after the replayed event: unchanged
+----
+
+The two clicks arrived together; the return's version let one commit and refused the other with
+`409`. When they do not overlap, both answer `200` and the second changes nothing. The unit came back
+once, the money once, and the ledger now balances to zero for this order: capture and refund cancel
+out. Receiving the same return again later answers `200 REFUNDED` and changes nothing either.
+
+The guards also hold in the other order. When `return-received` reaches catalog *before* the real
+receive (an announcement nobody sent yet, as in the replay above), catalog books the receipt then, and
+the real announcement afterwards adds nothing: the reference is the same.
 
 === Break it
 
@@ -554,13 +593,31 @@ docker compose exec -T -e PGPASSWORD=payment_service postgres psql -h localhost 
   -c "update payments set refunded_amount = amount + 1 where order_id = '$ORDER'"
 ----
 
-`refunded_amount` 3.00; one refund `REFUNDED` 3.00 and one `FAILED` with "A refund of 3.00 EUR would
-exceed the captured 5.00 EUR (3.00 already refunded)"; the ledger shows the capture and one `REFUND`
-transaction (`SALES 3.00`, `PROVIDER_RECEIVABLE -3.00`). The refused refund never reached the
-provider. The manual update fails on the check constraint `payments_refunds_within_amount`.
+In a run:
 
-order-service knows no returns with these ids, so it dead-letters both answers: `dl` rises by two.
-That is the right reaction to answers nobody asked for.
+[source]
+----
+  status  | void_requested | held | refunded_amount
+ CAPTURED | f              | t    |            3.00
+  kind   |       account       | amount
+ CAPTURE | PROVIDER_RECEIVABLE |   5.00
+ CAPTURE | SALES               |  -5.00
+ REFUND  | SALES               |   3.00
+ REFUND  | PROVIDER_RECEIVABLE |  -3.00
+  status  | amount |                                 failure_reason
+ REFUNDED |   3.00 |
+ FAILED   |   3.00 | A refund of 3.00 EUR would exceed the captured 5.00 EUR (3.00 already refunded)
+ERROR:  new row for relation "payments" violates check constraint "payments_refunds_within_amount"
+----
+
+The second refund was refused before the provider was asked, with a reason a person can act on, and
+booked nothing. The manual update, a person "fixing" the data by hand, is refused by the database
+itself.
+
+order-service knows no returns with these ids, so it dead-letters both answers
+(`exception=ReturnNotFoundException`, `topic=payment.events`): the right reaction to answers nobody
+asked for. Right after the commands `dl` may show one: both answers share the order's partition, so
+the second waits behind the first one's retries and arrives in the dead-letter topic a few seconds later.
 
 === Break it
 
