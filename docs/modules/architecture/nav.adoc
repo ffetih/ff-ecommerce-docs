@@ -1,5 +1,5 @@
-.Architecture (Architect)
-* xref:index.adoc[Architecture overview]
+.Architect
+* xref:index.adoc[Overview]
 * xref:saga.adoc[The order saga]
 * xref:aggregates.adoc[Aggregates and invariants]
 * xref:consistency/index.adoc[Consistency: ten failure stories]

@@ -17,13 +17,13 @@
     </div>
     <div id="topbar-nav" class="navbar-menu">
       <div class="navbar-end">
-        <a class="navbar-item" href="{{{relativize '/ff-ecommerce/architecture/index.html'}}}">Architect</a>
-        <a class="navbar-item" href="{{{relativize '/ff-ecommerce/business/index.html'}}}">Business</a>
-        <a class="navbar-item" href="{{{relativize '/ff-ecommerce/developer/index.html'}}}">Developer</a>
-        <a class="navbar-item" href="{{{relativize '/ff-ecommerce/operations/index.html'}}}">Operations</a>
+        <a class="navbar-item{{#if (eq page.module 'architecture')}} is-active{{/if}}" href="{{{relativize '/ff-ecommerce/architecture/index.html'}}}">Architect</a>
+        <a class="navbar-item{{#if (eq page.module 'business')}} is-active{{/if}}" href="{{{relativize '/ff-ecommerce/business/index.html'}}}">Business</a>
+        <a class="navbar-item{{#if (eq page.module 'developer')}} is-active{{/if}}" href="{{{relativize '/ff-ecommerce/developer/index.html'}}}">Developer</a>
+        <a class="navbar-item{{#if (eq page.module 'operations')}} is-active{{/if}}" href="{{{relativize '/ff-ecommerce/operations/index.html'}}}">Operations</a>
         <div class="navbar-item has-dropdown is-hoverable">
           <a class="navbar-link" href="https://github.com/ffetih/ff-ecommerce">GitHub</a>
-          <div class="navbar-dropdown">
+          <div class="navbar-dropdown is-right">
             <a class="navbar-item" href="https://github.com/ffetih/ff-ecommerce">ff-ecommerce (code)</a>
             <a class="navbar-item" href="https://github.com/ffetih/ff-ecommerce-ui">ff-ecommerce-ui (web console)</a>
             <a class="navbar-item" href="https://github.com/ffetih/ff-ecommerce-docs">ff-ecommerce-docs (this site)</a>

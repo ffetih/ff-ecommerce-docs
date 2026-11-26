@@ -14,23 +14,23 @@ slice under `src/features/`:
 [source]
 ----
 ff-ecommerce-ui/
-├── vite.config.ts            # Same-origin /api -> :8080 proxy (strips Origin/Referer)
-├── playwright.config.ts      # Two projects: 'ui' (CI, mocked) and 'live' (full stack)
+├── vite.config.ts          # /api -> :8080 proxy (strips Origin/Referer)
+├── playwright.config.ts    # Projects: 'ui' (CI, mocked) and 'live'
 ├── e2e/
-│   ├── fixtures/             # Mock OIDC PKCE interceptor & live Keycloak login helpers
-│   ├── ui/                   # Fast browser contract & protocol tests (no Docker needed)
-│   └── live/                 # Full-stack smoke suite against real Keycloak, Gateway & Kafka
+│   ├── fixtures/           # Mock OIDC PKCE & live Keycloak helpers
+│   ├── ui/                 # Fast browser contract tests (no Docker)
+│   └── live/               # Full-stack smoke suite against local stack
 └── src/
-    ├── app/                  # Shell, navigation, routes (/callback, storefront, /admin/*)
-    ├── shared/               # RFC 9457 httpClient + trace log, native <dialog>, tables
+    ├── app/                # Shell, navigation, routes (/callback, /admin/*)
+    ├── shared/             # RFC 9457 httpClient, trace log, <dialog>, tables
     └── features/
-        ├── auth/             # oidc-client-ts UserManager (in-memory), AuthCallbackPage, ProtocolInspector
-        ├── catalog/          # Public storefront + Admin catalog, prices, off-sale & stock receipts
-        ├── cart/             # Client-side cart + per-attempt Idempotency-Key lifecycle
-        ├── customer/         # /me onboarding & address updates + Admin customer lookup/deactivate
-        ├── orders/           # Order list/detail, SagaTimeline, backoff polling & 202 async cancel
-        ├── payments/         # Simulated cardToken catalog & paymentStatus labels (ADR-0009)
-        └── shipping/         # Admin saga operations: orders, shipments (dispatch/deliver) & reservations
+        ├── auth/           # oidc-client-ts (in-memory), ProtocolInspector
+        ├── catalog/        # Storefront + Admin catalog, prices & stock
+        ├── cart/           # Cart + per-attempt Idempotency-Key
+        ├── customer/       # /me onboarding + Admin customer directory
+        ├── orders/         # Order detail, SagaTimeline, polling & 202 cancel
+        ├── payments/       # Simulated cardToken options & paymentStatus
+        └── shipping/       # Admin orders, shipments & reservations
 ----
 
 == How the console honours backend guarantees
