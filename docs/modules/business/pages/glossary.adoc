@@ -2,22 +2,31 @@
 :description: One meaning for each word used across the services.
 
 [glossary]
+Authorization (payment):: The bank holds the order's amount on the card; no money moves yet. The hold expires after some days.
 Aggregate (DDD):: A cluster of objects changed as one unit through one root, so its rules hold after every change. For example an order with its lines.
 Back office:: Staff with the `admin` role: catalog, stock, shipments, any order.
-Bounded context (DDD):: A part of the business with its own model, where every word has one meaning. Here: ordering, catalog & inventory, shipping, customer, identity.
+Bounded context (DDD):: A part of the business with its own model, where every word has one meaning. Here: ordering, catalog & inventory, shipping, payment, customer, identity.
+Capture (payment):: The held money is taken. Here: when the parcel is dispatched.
+Card token:: The payment method as the payment provider knows it. Card numbers never reach the shop.
 Cancellation request:: A customer's or the system's wish to cancel a confirmed order; the warehouse (shipping) decides.
 Commit (stock):: Reserved units leave the warehouse when the parcel is handed to the carrier.
 Compensation:: The step that undoes an earlier step when a later one fails, for example releasing stock when an order is cancelled.
+Command:: A message asking one service to do something, for example `authorize-payment`. Unlike an event, it has one receiver.
 Dead letter:: A message a service could not process after several attempts; it is set aside for a person to look at.
 Dispatch:: Handing the parcel to the carrier. The point of no return: afterwards an order can no longer be cancelled.
 Event:: A message announcing something that has happened, for example `order-placed`.
+Double-entry ledger:: Every money movement is booked as entries that sum to zero, for example a capture: provider owes us +amount, sales −amount. Money is moved, never created.
 Goods receipt:: Units arriving at the warehouse, added to stock.
-Idempotency key:: A unique value the client sends with an order request, so a repeated request does not create a second order.
+Idempotency key:: A unique value sent with a request, so a repeated request does not do the same thing twice: the client's key when placing an order, payment-service's key per provider call.
 Invariant (DDD):: A rule that must always hold, for example "reserved units never exceed units on hand".
+Overdue (payment):: The parcel left but the capture failed: the customer owes the money.
 Order expiry:: Automatic cancellation of orders that stopped moving.
+Payment provider:: The external party that talks to the banks. Simulated in this project.
 Release (stock):: Reserved units become available again because the order was cancelled.
 Reservation:: Units set aside for one order; all lines or none.
 Saga:: A business process across several services, each doing its part in its own transaction and announcing it.
 Shipment:: The parcel for one confirmed order.
 SKU:: Stock keeping unit: the product code.
 Ubiquitous language (DDD):: The words a context uses, the same in conversation, documents and code.
+Unknown outcome (payment):: The provider did not answer; the money may or may not be held. Not a decline: payment-service asks again with the same key.
+Void (payment):: The hold on the card is released without taking money, after a cancellation.

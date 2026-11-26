@@ -7,6 +7,7 @@
 
 |xref:metrics.adoc[Metrics and alerts] |know whether events are flowing, and what to alert on
 |xref:dead-letters.adoc[Runbook: dead letters] |handle a message a service could not process
+|xref:payments.adoc[Runbook: payments] |handle payments waiting for the provider, money that is owed, and check the ledger
 |xref:configuration.adoc[Configuration reference] |change timeouts, retention, expiry, endpoints
 |xref:keycloak.adoc[Keycloak realm and clients] |understand users, clients, audiences, and what changes before deployment
 |===

@@ -42,5 +42,5 @@ alternatives that were rejected. New records follow the xref:adr/0000-template.a
 
 |xref:adr/0009-payments-driven-by-order-service.adoc[ADR-0009]
 |Payments, driven by order-service
-|Proposed
+|Accepted
 |===

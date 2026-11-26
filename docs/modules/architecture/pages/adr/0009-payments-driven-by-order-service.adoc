@@ -1,7 +1,7 @@
 = ADR-0009: Payments, driven by order-service
 :description: Where payment enters the order flow, who drives it, and how money stays correct when the provider is slow or silent.
 
-* *Status:* Proposed
+* *Status:* Accepted (implemented in s08)
 * *Date:* 2026-11-26
 
 == Context
@@ -71,6 +71,30 @@ can produce every outcome on purpose.
 * New failure stories: a provider that does not answer, a cancellation racing an authorization, and a
   capture repeated by a retry. Each gets a test and a drill, like the seven of s06.
 * A refund needs a return first; it follows with returns (s09).
+
+== Implementation notes (s08)
+
+Decisions taken while building it, within the decision above:
+
+* *The order records the payment's state* (`paymentStatus`: `NOT_REQUESTED`, `AUTHORIZING`,
+  `AUTHORIZED`, `DECLINED`, `VOIDING`, `VOIDED`, `CAPTURING`, `CAPTURED`, `OVERDUE`) next to its own
+  status, rather than a new order status. The order lifecycle customers see did not change; it stays
+  `PLACED` until the authorization arrives.
+* *Commands follow from state changes.* The order's state machine moves the payment into an -ING
+  state; one rule turns that change into the command and writes it to the outbox in the same
+  transaction. Customer cancellation, a declined card, shipping's answers and order expiry all reach
+  payment through this one rule, so none of them can forget a void.
+* *Expiry bounds an unanswered authorization at 30 minutes*, not 3 days: the order is still `PLACED`,
+  and expiring it voids the pending authorization.
+* *payment-service remembers a void* that arrives while the authorization is unanswered, and asks
+  the provider again at once (xref:consistency/cancel-during-authorization.adoc[story]).
+* *A void the provider refuses* is logged and treated as done: no money was taken, and the hold lapses
+  at the provider on its own.
+* *The ledger enforces its rules in the database*: a statement-level trigger rejects a transaction
+  whose entries do not sum to zero in one currency, row triggers reject updates and deletes, and a
+  unique reference makes booking idempotent.
+* *payment-service has no public API.* Its state is visible on the order (`paymentStatus`) and, for
+  drills, in its database.
 
 == Alternatives considered
 

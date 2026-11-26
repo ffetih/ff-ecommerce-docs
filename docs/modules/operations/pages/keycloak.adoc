@@ -29,10 +29,10 @@ The ids are fixed so that scripts and tests can refer to them.
 [cols=",,,",options="header",]
 |===
 |Client |Type |Used by |Audience in its tokens
-|`ecommerce-cli` |public, device authorization grant |people in a terminal |all four services
-|`ecommerce-dev` |public, password grant |`scripts/dev-auth.sh`, end-to-end tests |all four services
+|`ecommerce-cli` |public, device authorization grant |people in a terminal |all five services
+|`ecommerce-dev` |public, password grant |`scripts/dev-auth.sh`, end-to-end tests |all five services
 |`order-service` |confidential, client credentials |order-service calling catalog and customer |`catalog-service`, `customer-service`
-|`shop` |public, authorization code + PKCE (S256) |the web console on `http://localhost:5173` (xref:developer:ui-integration.adoc[]) |all four services
+|`shop` |public, authorization code + PKCE (S256) |the web console on `http://localhost:5173` (xref:developer:ui-integration.adoc[]) |all five services
 |===
 
 `ecommerce-dev` exists only because scripts and tests need a non-interactive login. The password
@@ -42,7 +42,7 @@ Each service accepts a token only if its own name is in the `aud` claim. An `ord
 therefore works against catalog and customer, and is rejected by shipping.
 
 For people, audience is not what separates the services: tokens from `ecommerce-cli`,
-`ecommerce-dev` and `shop` carry all four audiences. Roles and ownership rules do that separation (a customer
+`ecommerce-dev` and `shop` carry all five audiences. Roles and ownership rules do that separation (a customer
 reaches shipping, and gets 403). Audience is a real boundary for machine tokens only.
 
 == Roles

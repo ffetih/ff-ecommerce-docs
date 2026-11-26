@@ -26,6 +26,17 @@ the answer comes from the warehouse. A shipped order cannot be cancelled.
 order not handed to the carrier within 3 days is cancelled if the parcel can still be stopped
 ("Not dispatched in time"). Both times are configurable.
 
+|Payment
+|Every order names a payment method. The order is confirmed only when its stock is reserved *and*
+its amount is held on the card. The money is taken when the parcel is handed to the carrier, never
+before; a cancelled order holds no money. A customer is never charged twice for one order, even
+when the payment provider answers late or not at all. A provider that does not answer has not
+declined.
+
+|Money that cannot be taken
+|If the money cannot be taken after the parcel has left, the parcel is not called back: the order
+stays shipped and the payment is overdue.
+
 |Delivery
 |An order can only be delivered after it was shipped.
 

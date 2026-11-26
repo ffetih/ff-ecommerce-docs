@@ -1,0 +1,53 @@
+= A cancellation racing an authorization
+:description: The customer cancels while the card authorization has no answer yet. The approval arrives afterwards.
+
+== The scenario
+
+The stock is reserved and the authorization has been sent, but the provider has not answered yet
+(see xref:consistency/provider-no-answer.adoc[a payment provider that does not answer]). The order
+is still `PLACED`, so the customer, or order expiry, cancels it: the order becomes `CANCELLED` at
+once, and catalog releases the stock. Then the provider's approval arrives.
+
+== What would go wrong
+
+* *Ignore the cancellation in payment-service*, because there is nothing to void yet. The approval
+  arrives, the payment becomes `AUTHORIZED`, and the hold stays on the card for a cancelled order
+  until the bank lets it expire, about a week later.
+* *Announce the approval anyway.* order-service would see `payment-authorized` for a cancelled order;
+  confirming it would revive an order whose stock is gone.
+
+== The fix
+
+A cancelled order holds no money. When an order is cancelled while its payment is `AUTHORIZING` or
+`AUTHORIZED`, its payment state becomes `VOIDING` and order-service sends `void-payment`, in the same
+transaction as the cancellation (the command is derived from the order's state change, so customer
+cancellation, decline and expiry all send it the same way).
+
+payment-service cannot void an authorization whose outcome is unknown, so it *remembers* the request:
+the payment stays `AUTHORIZING` with `voidRequested = true`, and it asks the provider again right
+away. When the approval arrives, the payment goes straight to `VOIDING` instead of `AUTHORIZED`, the
+hold is released, and the only event order-service receives is `payment-voided`. If the provider
+declines after all, there is nothing to release, and the payment ends `DECLINED`.
+
+[source]
+----
+ AUTHORIZING ──void requested──► AUTHORIZING (voidRequested)
+                                     │ approved            │ declined
+                                     ▼                     ▼
+                                  VOIDING ──► VOIDED     DECLINED
+----
+
+On the order's side, a late `payment-authorized` for a `CANCELLED` order changes nothing: the void is
+already on its way.
+
+== How it is proven
+
+* `PaymentTest`: `aVoidDuringTheAuthorizationIsRememberedAndAppliedOnApproval`,
+  `aVoidRememberedBeforeADeclineHasNothingToRelease`
+* `PaymentServiceTest`: `aCancellationDuringAnUnansweredAuthorizationIsRememberedAndReleasesTheHoldWhenTheAnswerComes`
+* `OrderTest`: `cancellingWhileTheAuthorizationIsPendingVoidsIt`
+* `OrderSagaServiceTest`: `cancellingWhileTheAuthorizationIsPendingVoidsItAndALateApprovalChangesNothing`
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc#_9_a_cancellation_racing_an_authorization[failure drill 9].
+
+Decision record: xref:adr/0009-payments-driven-by-order-service.adoc[ADR-0009].

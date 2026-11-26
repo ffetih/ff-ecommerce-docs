@@ -12,6 +12,20 @@ docker compose --profile tools up -d      # adds Kafka UI on http://localhost:80
 docker compose down                       # stop (add -v to also delete data)
 ----
 
+[NOTE]
+====
+The database scripts in `infra/postgres/initdb` run only when the PostgreSQL volume is created. A
+volume from before payments (s08) has no `payment_db`; create it once:
+
+[source,bash]
+----
+docker compose exec -T postgres psql -U postgres < infra/postgres/initdb/05-payment.sql
+----
+
+The same goes for the realm: after pulling a change to `infra/keycloak/import`, recreate Keycloak
+(`docker compose up -d --force-recreate keycloak`).
+====
+
 == Build once, then run services
 
 Shared modules (`events`, `messaging`, `security`, `test-support`) must be in your local Maven
@@ -32,6 +46,7 @@ repository before a single service can start on its own:
 |customer-service |8082
 |order-service |8083
 |shipping-service |8084
+|payment-service |8085 (no public API; actuator only)
 |===
 
 [TIP]

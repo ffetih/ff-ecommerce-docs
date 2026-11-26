@@ -1,7 +1,7 @@
 = Architecture overview
 :description: The services, how they talk to each other, and the decisions behind them.
 
-FF E-Commerce takes an order from placement to delivery across four services, each with its own
+FF E-Commerce takes an order from placement to delivery across five services, each with its own
 database. Nothing spans two databases in one transaction: services agree through events, and every
 step is built so that a message arriving late, twice, or not at all leaves the system consistent.
 
@@ -24,13 +24,14 @@ digraph context {
     ord [label="order-service\n:8083"];
     cat [label="catalog-service\n:8081"];
     shp [label="shipping-service\n:8084"];
+    pay [label="payment-service\n:8085"];
   }
 
-  kafka [label="Kafka\norder.lifecycle · catalog.reservations · shipping.shipments · catalog.stock", shape=box, fillcolor="#e7f0fa", color="#4a7fb5"];
+  kafka [label="Kafka\norder.lifecycle · catalog.reservations · shipping.shipments · catalog.stock\npayment.commands · payment.events", shape=box, fillcolor="#e7f0fa", color="#4a7fb5"];
 
   { rank=same; user; kc; }
-  { rank=same; cus; ord; cat; shp; }
-  cus -> ord -> cat -> shp [style=invis];
+  { rank=same; cus; ord; cat; shp; pay; }
+  cus -> ord -> cat -> shp -> pay [style=invis];
 
   user -> kc [label=" log in"];
   user -> gw [label=" HTTPS + token"];
@@ -40,13 +41,15 @@ digraph context {
   ord -> kafka [dir=both, label=" events"];
   cat -> kafka [dir=both];
   shp -> kafka [dir=both];
+  pay -> kafka [dir=both];
 }
 ----
 
 * *Synchronous calls* only where an answer is needed before anything is stored: placing an order
   reads the customer and the current prices.
 * *Events* for everything that happens afterwards: reserving stock, preparing the parcel, cancelling,
-  dispatching, delivering.
+  dispatching, delivering. Payment receives *commands* from order-service and answers with events.
+* payment-service has no route through the gateway: nobody outside calls it.
 
 == Services
 
@@ -61,10 +64,15 @@ digraph context {
 |Customer profiles keyed by the Keycloak user id; shipping addresses; deactivation.
 
 |`order-service` |orders
-|Order placement at catalog prices, idempotent per `Idempotency-Key`; the order lifecycle; order expiry.
+|Order placement at catalog prices, idempotent per `Idempotency-Key`; the order lifecycle; order expiry;
+drives the payment (authorize, capture, void).
 
 |`shipping-service` |shipments
 |One shipment per confirmed order; dispatch and delivery; decides cancellations of confirmed orders.
+
+|`payment-service` |payments, ledger
+|Authorize, capture and void through the (simulated) provider with an idempotency key per call;
+resolves unanswered calls; books every money movement in a double-entry ledger.
 
 |`gateway` |nothing
 |Routes each API path to its service. Makes no access decision: every service checks the token itself.
@@ -93,6 +101,9 @@ skip what they have already processed (xref:adr/0005-transactional-outbox-and-in
 |Choreographed saga |Order, catalog and shipping react to each other's events; shipping owns the
 point of no return (xref:adr/0007-order-saga.adoc[ADR-0007], xref:saga.adoc[the saga]).
 
+|Payments, commanded |order-service tells payment-service what to do; unknown provider outcomes are
+asked again, never guessed (xref:adr/0009-payments-driven-by-order-service.adoc[ADR-0009]).
+
 |Security |Every service is a resource server with deny-by-default rules
 (xref:adr/0008-security.adoc[ADR-0008], xref:security.adoc[security model]).
 |===
@@ -100,7 +111,8 @@ point of no return (xref:adr/0007-order-saga.adoc[ADR-0007], xref:saga.adoc[the 
 == Quality goals
 
 . *Consistent under failure.* Stock, orders and parcels never disagree for good, whatever the order
-  or the number of times messages arrive. xref:consistency/index.adoc[Seven failure stories] show how.
+  or the number of times messages arrive, and no customer is charged twice or for nothing.
+  xref:consistency/index.adoc[Ten failure stories] show how.
 . *Visible when stuck.* A step that cannot happen is measured, not silently lost
   (xref:operations:metrics.adoc[metrics]).
 . *Secure by default.* An endpoint nobody listed is closed.

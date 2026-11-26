@@ -1,0 +1,83 @@
+= Runbook: payments
+:description: Payments that wait, money that is owed, and how to look at both.
+
+payment-service has no public API. What it knows shows up on the order (`paymentStatus`, see the
+xref:developer:api.adoc[API]), and in detail in its own database.
+
+== Looking at one order's payment
+
+[source,bash]
+----
+source scripts/drills.sh && fresh
+payment <order-id>      # payment row and its ledger entries
+----
+
+`payments.status` is payment-service's view: `AUTHORIZING`, `AUTHORIZED`, `DECLINED`, `CAPTURING`,
+`CAPTURED`, `CAPTURE_FAILED`, `VOIDING`, `VOIDED`. The order's `paymentStatus` is order-service's view
+of the same payment; they agree once the last event has been processed.
+
+== Payments that wait for the provider
+
+*Symptom:* orders stay `PLACED` with `paymentStatus: AUTHORIZING`; payment-service logs
+`No answer to AUTHORIZE of payment …; asking again later`, and every 15 s
+`Asked the provider again about N payment(s)`.
+
+*Meaning:* the provider does not answer. Nothing is wrong yet: an unknown outcome is not a decline,
+and payment-service keeps asking with the same idempotency key, so no second hold can be placed
+(xref:architecture:consistency/provider-no-answer.adoc[why]).
+
+*Check:*
+
+[source,sql]
+----
+select status, count(*), min(updated_at) from payments
+ where status in ('AUTHORIZING', 'CAPTURING', 'VOIDING') group by status;
+----
+
+*Act:* restore the connection to the provider. Nothing has to be replayed: the resolver finishes
+every waiting payment on its own. An order still `PLACED` after 30 minutes is cancelled by order
+expiry, and its authorization is voided.
+
+== Money that is owed
+
+*Symptom:* an order is `SHIPPED` or `DELIVERED` with `paymentStatus: OVERDUE`; order-service logs
+`Capture failed for shipped order …`.
+
+*Meaning:* the parcel left, but the provider refused the capture (for example, the authorization
+expired). Dispatch is the point of no return, so nothing is cancelled: the customer owes the money
+(xref:architecture:consistency/repeated-capture.adoc#_a_capture_that_fails[why]).
+
+*Check:*
+
+[source,sql]
+----
+-- order_db
+select id, customer_id, total_amount, currency, updated_at from orders
+ where payment_status = 'OVERDUE' order by updated_at;
+----
+
+*Act:* collect the payment outside the system (contact the customer, a new payment link). Collecting
+it inside the system is not built yet.
+
+== The ledger
+
+Every capture is booked as two entries that sum to zero: `PROVIDER_RECEIVABLE +amount`, `SALES −amount`.
+The sum of all entries is always zero; the database refuses anything else.
+
+[source,sql]
+----
+-- payment_db: balance per account and currency
+select account, currency, sum(amount) from ledger_entries group by account, currency;
+-- every transaction balances (always empty)
+select transaction_id from ledger_entries group by transaction_id having sum(amount) <> 0;
+----
+
+The ledger is append-only: `UPDATE` and `DELETE` on its tables are refused. A wrong booking is
+corrected by a new, reversing transaction.
+
+== Dead letters
+
+payment-service reads `payment.commands`; its dead letters go to `payment.commands-dlt`, and
+order-service's from `payment.events` to `payment.events-dlt`. Two cases are dead-lettered on
+purpose, because order-service should never send them: a void for a payment already captured, and a
+capture for an order without a payment. See xref:dead-letters.adoc[Runbook: dead letters].

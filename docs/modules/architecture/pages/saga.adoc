@@ -1,9 +1,11 @@
 = The order saga
-:description: How order, catalog and shipping move one order from placement to delivery without a shared transaction.
+:description: How order, catalog, payment and shipping move one order from placement to delivery without a shared transaction.
 
-An order touches three services with their own databases. Instead of one transaction, each service
-does its part in a local transaction and announces it with an event; the others react
-(xref:adr/0007-order-saga.adoc[ADR-0007]).
+An order touches four services with their own databases. Instead of one transaction, each service
+does its part in a local transaction and announces it with an event. Catalog and shipping react to
+order-service's events (choreography, xref:adr/0007-order-saga.adoc[ADR-0007]); payment-service
+receives commands from order-service and answers with events
+(xref:adr/0009-payments-driven-by-order-service.adoc[ADR-0009]).
 
 == Order states
 
@@ -21,18 +23,55 @@ digraph order_states {
 
 
   start -> PLACED [label=" placed"];
-  PLACED -> CONFIRMED [label="stock-reserved"];
+  PLACED -> CONFIRMED [label="stock-reserved\nthen payment-authorized"];
   CONFIRMED -> SHIPPED [label="shipment-dispatched"];
   SHIPPED -> DELIVERED [label="shipment-delivered"];
   CONFIRMED -> CANCELLATION_REQUESTED [label="customer cancels\nnot dispatched in 3 days"];
   CANCELLATION_REQUESTED -> CANCELLED [label="shipment-cancelled"];
   CANCELLATION_REQUESTED -> SHIPPED [label="shipment-dispatched\n(dispatch came first)"];
-  PLACED -> CANCELLED [label="reservation-failed\ncustomer cancels\nnot confirmed in 30 min"];
+  PLACED -> CANCELLED [label="reservation-failed\npayment-declined\ncustomer cancels\nnot confirmed in 30 min"];
 }
 ----
 
 The order only moves forward. A step it has already passed is ignored, so a late or repeated event
-changes nothing.
+changes nothing. An order is confirmed only when both its stock and its money are held.
+
+== Payment states, as the order sees them
+
+Next to its status, the order records what it has asked of payment-service. The states ending in
+-ING mean a command is on its way; order-service sends the command when the order enters that state,
+in the same transaction (outbox).
+
+[graphviz,payment-states,svg]
+----
+digraph payment_states {
+  rankdir=LR; nodesep=0.4; ranksep=0.6; fontname="Helvetica";
+  node [shape=box, style="rounded,filled", fillcolor="#f4f4f4", color="#888888", fontname="Helvetica", fontsize=11, margin="0.15,0.08"];
+  edge [color="#555555", fontname="Helvetica", fontsize=9, arrowsize=0.7];
+
+  NOT_REQUESTED [label="NOT_REQUESTED"];
+  AUTHORIZING [fillcolor="#fdf1e3", color="#c98a3c"];
+  CAPTURING [fillcolor="#fdf1e3", color="#c98a3c"];
+  VOIDING [fillcolor="#fdf1e3", color="#c98a3c"];
+  CAPTURED [fillcolor="#e6f2e6", color="#5a9a5a"];
+  DECLINED [fillcolor="#fbe9e7", color="#c0634f"];
+  OVERDUE [fillcolor="#fbe9e7", color="#c0634f"];
+  VOIDED;
+
+  NOT_REQUESTED -> AUTHORIZING [label="stock-reserved\n» authorize-payment"];
+  AUTHORIZING -> AUTHORIZED [label="payment-authorized\n(order CONFIRMED)"];
+  AUTHORIZING -> DECLINED [label="payment-declined\n(order CANCELLED)"];
+  AUTHORIZED -> CAPTURING [label="shipment-dispatched\n» capture-payment"];
+  CAPTURING -> CAPTURED [label="payment-captured"];
+  CAPTURING -> OVERDUE [label="payment-capture-failed\n(order stays SHIPPED)"];
+  AUTHORIZING -> VOIDING [label="order cancelled\n» void-payment"];
+  AUTHORIZED -> VOIDING [label="order cancelled\n» void-payment"];
+  VOIDING -> VOIDED [label="payment-voided"];
+}
+----
+
+`»` marks the command order-service sends. Orders placed before payments existed stay
+`NOT_REQUESTED` and ship without a payment.
 
 == Who reacts to what
 
@@ -47,17 +86,28 @@ participant "catalog-service" as C
 queue "catalog.reservations" as CR
 participant "shipping-service" as S
 queue "shipping.shipments" as SS
+queue "payment.commands" as PC
+participant "payment-service" as P
+queue "payment.events" as PE
 
 O -> OL : order-placed
 OL -> C : reserve stock
 C -> CR : stock-reserved
-CR -> O : CONFIRMED
+CR -> O : payment AUTHORIZING
+O -> PC : authorize-payment
+PC -> P : hold the amount
+P -> PE : payment-authorized
+PE -> O : CONFIRMED
 O -> OL : order-confirmed
 OL -> S : create shipment
 == warehouse hands the parcel over ==
 S -> SS : shipment-dispatched
 SS -> C : commit stock
 SS -> O : SHIPPED
+O -> PC : capture-payment
+PC -> P : take the money, book the ledger
+P -> PE : payment-captured
+PE -> O : CAPTURED
 S -> SS : shipment-delivered
 SS -> O : DELIVERED
 @enduml
@@ -73,16 +123,19 @@ All topics are keyed by order id, so the events of one order arrive in order wit
 
 |PLACED
 |order-service cancels on its own (`200`) and announces `order-cancelled`; catalog releases whatever it
-reserved. No shipment exists yet.
+reserved. No shipment exists yet. If the authorization was already asked for, order-service sends
+`void-payment`; payment-service remembers it until the provider answers
+(xref:consistency/cancel-during-authorization.adoc[story]).
 
 |CONFIRMED
 |order-service *asks* (`202`, CANCELLATION_REQUESTED) and announces `cancellation-requested`.
 Shipping decides, because only shipping knows whether the parcel has left: before dispatch it cancels
-the shipment and answers `shipment-cancelled`, and only then does the order become CANCELLED and the
-stock released; after dispatch it answers `cancellation-refused` and the order stays SHIPPED.
+the shipment and answers `shipment-cancelled`, and only then does the order become CANCELLED, the
+stock released and the hold on the card voided; after dispatch it answers `cancellation-refused`, the
+order stays SHIPPED and the money is captured.
 
 |SHIPPED or later
-|`409`. Afterwards it can only become a return (s09).
+|`409`. Afterwards it can only become a return, refunded through payments (s09).
 |===
 
 The full list of situations and their compensation is in

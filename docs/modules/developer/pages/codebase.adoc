@@ -11,7 +11,7 @@
 |`messaging` |Outbox, ordered relay, inbox, dead-letter handling, topic declaration, metrics.
 |`security` |Resource-server defaults: token validation, roles, deny-by-default, problem responses.
 |`test-support` |Shared Testcontainers setup, a test token issuer, stub HTTP servers.
-|`catalog-service`, `customer-service`, `order-service`, `shipping-service` |The services.
+|`catalog-service`, `customer-service`, `order-service`, `shipping-service`, `payment-service` |The services.
 |`gateway` |Routing only.
 |`e2e-tests` |The packaged services, end to end.
 |===
@@ -27,10 +27,11 @@ io.github.ffetih.ecommerce.<service>
 ├── adapter/
 │   ├── in/web/              REST controllers, problem responses
 │   ├── in/messaging/        Kafka listeners: read the envelope, call the application
-│   ├── in/scheduling/       timed work (order expiry)
+│   ├── in/scheduling/       timed work (order expiry, payment resolver)
 │   ├── out/persistence/     JPA or JDBC implementations of repository ports
 │   ├── out/messaging/       outbox implementations of event ports
-│   └── out/http/            clients of other services
+│   ├── out/http/            clients of other services
+│   └── out/provider/        the payment provider (payment-service; simulated)
 └── config/                  wiring, settings, security rules
 ----
 

@@ -1,4 +1,4 @@
-= Consistency: seven failure stories
+= Consistency: ten failure stories
 :description: Each rule in the saga exists because of one concrete way the system could end up wrong.
 
 Every service is consistent on its own. The hard part is between them: a message can arrive late,
@@ -30,7 +30,18 @@ proves it.
 
 |xref:consistency/inbox-forgets.adoc[An inbox that forgets too early]
 |A consumer group's offsets are lost (they expire while the service is down, or someone resets them), and Kafka delivers everything still in the topic again.
+
+|xref:consistency/provider-no-answer.adoc[A payment provider that does not answer]
+|The card authorization times out: the money may or may not be held.
+
+|xref:consistency/cancel-during-authorization.adoc[A cancellation racing an authorization]
+|The order is cancelled while its authorization has no answer yet, and the approval arrives afterwards.
+
+|xref:consistency/repeated-capture.adoc[A capture repeated by a retry]
+|The instruction to take the money arrives twice, or the provider's answer to it is lost.
 |===
+
+The first seven stories came with the saga's hardening (s06); the last three with payments (s08).
 
 Each story is told three times, from three angles: *why* it is designed this way (here), *break it
 and watch it* (xref:developer:try-it/failure-drills.adoc[failure drills]), and *what to do when it

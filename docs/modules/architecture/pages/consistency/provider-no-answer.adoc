@@ -1,0 +1,63 @@
+= A payment provider that does not answer
+:description: The call to authorize a card times out. Was the money held or not?
+
+== The scenario
+
+The order's stock is reserved, and payment-service asks the provider to hold the amount on the card.
+The call times out: the network dropped the answer, or the provider is slow. The provider may have
+placed the hold, or it may never have seen the request. Nobody knows.
+
+== What would go wrong
+
+Two tempting answers, both wrong:
+
+* *Treat it as declined.* The order is cancelled and the stock released, while the customer's bank
+  may show a hold for an order that no longer exists. Customers call support about money the shop
+  says it never took.
+* *Simply try again.* A second, independent request places a second hold: the customer is charged
+  twice for one order.
+
+A timeout is a third outcome, not a "no": the outcome is *unknown*.
+
+== The fix
+
+The provider's answer has three cases in the code, `Approved`, `Declined` and `Unknown`, so the
+unknown case cannot be mistaken for a decline (xref:adr/0009-payments-driven-by-order-service.adoc[ADR-0009]).
+
+Every provider call runs in three steps, and no database transaction is held open during the call:
+
+[source]
+----
+ 1. transaction   record the intent: payment AUTHORIZING   (+ the command in the inbox)
+ 2. no transaction call the provider with key "<paymentId>:authorize"
+ 3. transaction   lock the payment, apply the answer, outbox the event
+----
+
+An `Unknown` answer leaves the payment `AUTHORIZING`. A resolver in payment-service looks for
+payments that have been waiting for longer than `stale-after` (30 s) and asks again *with the same
+idempotency key*. The provider acts at most once per key and answers a repeated call with the first
+outcome, so asking again returns the hold that was placed instead of placing another one. If
+payment-service stops between the steps, the payment is still `AUTHORIZING` in its database and the
+resolver finishes it after the restart.
+
+The order waits in `PLACED` meanwhile. Order expiry bounds the wait: an order still `PLACED` after
+30 minutes is cancelled, and its pending authorization is voided.
+
+== How it is proven
+
+* `PaymentServiceTest`: `noAnswerIsNotADeclineTheResolverAsksAgainWithTheSameKey`,
+  `aProviderThatThrowsLeavesThePaymentInFlight`
+* `SimulatedPaymentProviderTest`: `aSlowAuthorizationIsPlacedButItsFirstAnswerIsLost`
+* `PaymentCommandsIT`: `anUnansweredAuthorizationIsResolvedNotDeclined` (Kafka, PostgreSQL)
+* `PaymentE2EIT`: `aProviderThatDoesNotAnswerDelaysTheOrderButDoesNotDeclineIt` (all services)
+* `OrderExpiryIT`: `aPlacedOrderWhosePaymentNeverGotAnAnswerIsCancelledAndItsAuthorizationVoided`
+
+The simulated provider's card token `tok_slow` produces exactly this: the hold is placed, the first
+answer is lost.
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc#_8_a_payment_provider_that_does_not_answer[failure drill 8].
+
+== When it happens in production
+
+Payments that stay `AUTHORIZING` for long mean the provider keeps not answering; the order stays
+`PLACED` until expiry cancels it. See xref:operations:payments.adoc[Runbook: payments].

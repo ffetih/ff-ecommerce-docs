@@ -53,7 +53,7 @@ customers.
 |===
 |Method |Path |Who |Purpose
 |`POST` |`/api/v1/orders` |customer |Place an order for the caller; requires an `Idempotency-Key` header (UUID per order attempt)
-|`GET` |`+/api/v1/orders/{orderId}+` |owner, admin |One order with its lines and prices
+|`GET` |`+/api/v1/orders/{orderId}+` |owner, admin |One order with its lines, prices, `status` and `paymentStatus`
 |`GET` |`/api/v1/orders` |customer |The caller's orders, newest first (admin: `?customerId=…` for anyone's)
 |`POST` |`+/api/v1/orders/{orderId}/cancel+` |owner, admin |Cancel: `200` if not confirmed yet; `202` for a confirmed order, while shipping decides; `409` once shipped
 |===
@@ -67,6 +67,11 @@ then stores the order and an `order.order-placed` event in one transaction. Repe
 same key returns the same order (`200`, `Idempotent-Replayed: true`); the same key with a different body
 is a `409`. Unknown or retired products and inactive customers give `422`; an unavailable dependency gives
 `503` with `Retry-After`, and the request can be retried safely with the same key.
+
+Every order needs a `cardToken` (the payment method as the provider knows it; `400` without it). The
+order is confirmed only once the payment is authorized; `paymentStatus` shows where the payment is:
+`NOT_REQUESTED`, `AUTHORIZING`, `AUTHORIZED`, `DECLINED`, `VOIDING`, `VOIDED`, `CAPTURING`, `CAPTURED`,
+`OVERDUE` (xref:architecture:saga.adoc#_payment_states_as_the_order_sees_them[payment states]).
 
 == shipping-service API
 
@@ -82,6 +87,12 @@ is a `409`. Unknown or retired products and inactive customers give `422`; an un
 Shipments are created from `order.order-confirmed` events, not through the API. Customers cannot see
 their shipment yet; exposing the tracking number on the order is on the roadmap.
 
+== payment-service
+
+No public API. It receives commands from order-service on `payment.commands` and answers on
+`payment.events`; its state is visible on the order. For operations: its actuator on port 8085 and
+its database (xref:operations:payments.adoc[runbook]).
+
 == Request bodies
 
 [source,json]
@@ -90,6 +101,6 @@ POST /api/v1/products                       {"sku": "KB-01", "name": "Keyboard",
 POST /api/v1/stock/KB-01/receipts           {"referenceId": "<uuid>", "quantity": 10}
 POST /api/v1/customers/me                   {"fullName": "Alice Example", "shippingAddress": "Bağdat Cd. 1, İstanbul"}
 PUT  /api/v1/customers/me/shipping-address  {"shippingAddress": "..."}
-POST /api/v1/orders                         {"lines": [{"sku": "KB-01", "quantity": 2}], "shippingAddress": "optional, defaults to the profile's"}
+POST /api/v1/orders                         {"cardToken": "tok_ok", "lines": [{"sku": "KB-01", "quantity": 2}], "shippingAddress": "optional, defaults to the profile's"}
 POST /api/v1/orders/{id}/cancel             {"reason": "changed my mind"}
 ----

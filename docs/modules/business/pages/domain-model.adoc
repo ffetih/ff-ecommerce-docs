@@ -1,7 +1,7 @@
 = Domain model: contexts and language
 :description: The bounded contexts of the shop, the words each one uses, and how they relate.
 
-The shop is not one model but five, each with its own words and rules. Domain-driven design calls
+The shop is not one model but six, each with its own words and rules. Domain-driven design calls
 them *bounded contexts*: inside one, every word has exactly one meaning; between them, the same word
 may mean different things, and the boundary is where one meaning is translated into the other.
 
@@ -21,6 +21,11 @@ purpose: a reservation must check price, availability and status in one place
 
 |Shipping |shipping-service |supporting
 |The parcel: preparing, handing over to the carrier, delivery. Owns the point of no return.
+
+|Payment |payment-service |supporting
+|The customer's money: holding it on the card, taking it when the parcel leaves, releasing it after
+a cancellation, and booking every movement in a double-entry ledger. Ordering decides *when*;
+Payment knows *how*, and what the provider answered.
 
 |Customer |customer-service |supporting
 |Who the shop delivers to: name, shipping address, whether the customer may still order.
@@ -46,8 +51,10 @@ digraph context_map {
   ordering [label="Ordering\norder-service · core", fillcolor="#fdf1e3", color="#c98a3c", penwidth=1.5];
   inventory [label="Catalog & inventory\ncatalog-service · core", fillcolor="#fdf1e3", color="#c98a3c", penwidth=1.5];
   shipping [label="Shipping\nshipping-service · supporting", fillcolor="#eef3fb", color="#4a7fb5"];
+  payment [label="Payment\npayment-service · supporting", fillcolor="#eef3fb", color="#4a7fb5"];
 
   { rank=same; customer; inventory; }
+  { rank=same; shipping; payment; }
 
   identity -> customer [label=" conformist:\n user id = customer id"];
   identity -> ordering [label=" conformist:\n customer from token"];
@@ -56,6 +63,8 @@ digraph context_map {
   ordering -> shipping [dir=both, style=dashed, label=" events"];
   ordering -> inventory [dir=both, style=dashed, label=" events", constraint=false];
   shipping -> inventory [style=dashed, label=" events"];
+  ordering -> payment [style=dashed, label=" commands"];
+  payment -> ordering [style=dashed, label=" events", constraint=false];
 }
 ----
 
@@ -74,6 +83,11 @@ own small types (`CustomerSnapshot`, `ProductPrice`). Their full models never le
 |Published language (events)
 |Everything after placing travels as events defined in one shared module (`events`), the only
 shared code between contexts. Each consumer reads only what it needs.
+
+|Customer/supplier, asynchronous commands
+|Ordering tells Payment what to do (`authorize-payment`, `capture-payment`, `void-payment`), and Payment
+answers with events (xref:architecture:adr/0009-payments-driven-by-order-service.adoc[ADR-0009]).
+Payment knows nothing about stock or parcels: only an order id, an amount and a card token.
 |===
 
 == Ubiquitous language: one word, several meanings
@@ -81,40 +95,48 @@ shared code between contexts. Each consumer reads only what it needs.
 The same word means something different in each context. Inside a context, use its meaning
 exactly; across contexts, say which one you mean.
 
-[cols="1,2,2,2"]
+[cols="1,2,2,2,2"]
 |===
-|Word |Ordering |Catalog & inventory |Shipping
+|Word |Ordering |Catalog & inventory |Shipping |Payment
 
 |*order*
 |the customer's purchase: lines, frozen prices, total, status
 |only an id: the key of a reservation
 |only an id: the key of a shipment
+|only an id and an amount: one payment per order
 
 |*price*
 |the unit price *at the moment of placing*, frozen in the order line
 |the *current* unit price of a product; may change any time
 |not known
+|the *amount* to hold and take, exactly the order's total
 
 |*cancel*
 |PLACED: cancel at once. CONFIRMED: *request* cancellation
 |*release* the reservation: units become available again
 |*cancel the shipment*, only before dispatch
+|*void*: release the hold; after capture only a refund gives money back
 
 |*customer*
 |a snapshot taken when placing: id, active, address
 |not known
 |an id and a delivery address on the parcel
+|an id and a card token
 
 |*product / line*
 |SKU, quantity, frozen unit price, line total
 |SKU, name, current price, active; stock per SKU
 |SKU and quantity to pack
+|not known
 |===
 
 Two more distinctions the language keeps sharp:
 
 * *Reserved* vs *committed* stock: reserved units are promised but still in the warehouse; committed
   units have left with the parcel.
+* *Authorized* vs *captured* money: an authorization only holds the amount on the card, and nothing
+  is booked; a capture takes it and is booked in the ledger. *Declined* (the provider said no) is not
+  *unknown* (the provider did not answer).
 * *Deactivated customer* (Customer: may not order) vs *disabled user* (Identity: may not log in):
   two decisions in two contexts.
 

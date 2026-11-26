@@ -2,8 +2,8 @@
 :description: An order-to-delivery flow across independent services, built to stay consistent when messages arrive late, twice, or not at all.
 :page-role: home
 
-An order-to-delivery flow built as independent services: catalog and inventory, customers, orders and
-shipping, each with its own database, talking through Kafka. The focus is on the hard parts of
+An order-to-delivery flow built as independent services: catalog and inventory, customers, orders,
+payments and shipping, each with its own database, talking through Kafka. The focus is on the hard parts of
 distributed systems rather than on feature count.
 
 == The question
@@ -17,10 +17,11 @@ sometimes arrive twice, sometimes late, sometimes get lost in a drawer. The syst
 shop keeps a list of notes it has already handled, never acts on a note that contradicts what it
 already knows, and someone checks the drawer.
 
-The answer here is a choreographed saga on top of a transactional outbox and an idempotent inbox,
-with one service owning each decision that cannot be undone.
+The answer here is a saga on top of a transactional outbox and an idempotent inbox, with one service
+owning each decision that cannot be undone. Catalog and shipping are choreographed; payment, where a
+mistake costs money directly, is commanded by order-service.
 
-== Seven failure stories
+== Ten failure stories
 
 Each rule exists because of one concrete way the system could end up wrong:
 
@@ -48,6 +49,15 @@ Each rule exists because of one concrete way the system could end up wrong:
 
 |xref:architecture:consistency/inbox-forgets.adoc[An inbox that forgets too early]
 |events processed twice after an offset reset
+
+|xref:architecture:consistency/provider-no-answer.adoc[A payment provider that does not answer]
+|a cancelled order with a hold on the card, or a customer charged twice
+
+|xref:architecture:consistency/cancel-during-authorization.adoc[A cancellation racing an authorization]
+|money held for an order that no longer exists
+
+|xref:architecture:consistency/repeated-capture.adoc[A capture repeated by a retry]
+|a customer charged twice, revenue booked twice
 |===
 
 == Engineering scope
@@ -59,7 +69,8 @@ Each rule exists because of one concrete way the system could end up wrong:
 |Consistency
 |Concurrency-safe stock reservations; transactional outbox with ordered relay; idempotent inbox;
 choreographed saga with compensation; cancellation decided by the owner of the point of no return;
-order expiry.
+order expiry; payments with idempotent provider calls, unknown outcomes resolved rather than guessed,
+and a double-entry ledger the database keeps balanced.
 
 |Security
 |Keycloak; every service an OAuth2 resource server with audience checks and enforced

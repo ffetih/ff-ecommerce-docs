@@ -1,0 +1,58 @@
+= A capture repeated by a retry
+:description: The command to take the money arrives twice, or the provider's answer to it is lost.
+
+== The scenario
+
+The parcel leaves the warehouse, order-service sends `capture-payment`, and payment-service takes
+the money. Then the same instruction arrives again: Kafka redelivers the command, a dead letter is
+replayed, or the provider's answer to the capture was lost and payment-service asks again.
+
+== What would go wrong
+
+The customer pays twice for one parcel. And if each capture were booked, the ledger would show twice
+the revenue the shop actually has: the books would be wrong even after the refund.
+
+== The fix
+
+Three independent guards, each sufficient on its own for its own case:
+
+[cols="1,2"]
+|===
+|Guard |Stops
+
+|*The inbox* (ADR-0005)
+|The same command message delivered twice: payment-service processes it once.
+
+|*The payment's state machine*
+|A new command for a payment that is already `CAPTURING` or `CAPTURED`: it changes nothing, and the
+provider is not called.
+
+|*The provider's idempotency key* `<paymentId>:capture`
+|A repeated provider call after a lost answer: the provider returns the first capture instead of
+taking the money again.
+|===
+
+The ledger has its own guard. A capture is booked as one transaction of two entries,
+`PROVIDER_RECEIVABLE +amount` and `SALES −amount`, whose `reference` is the capture's idempotency
+key, and `reference` is unique: booking the same capture again is a no-op. The database also refuses
+any transaction whose entries do not sum to zero, and any update or delete of ledger rows: the ledger
+is append-only, and a mistake is corrected by a new, reversing transaction.
+
+== How it is proven
+
+* `PaymentServiceTest`: `aCaptureBooksTheLedgerOnceEvenIfRepeated`
+* `SimulatedPaymentProviderTest`: `capturesAnAuthorizationOnce`
+* `PaymentPersistenceIT`: `bookingACaptureTwiceBooksItOnce`, `theDatabaseRejectsAnUnbalancedTransaction`,
+  `theDatabaseRefusesToChangeHistory`
+* `PaymentCommandsIT`: `authorizesCapturesAndBooksTheLedger`
+
+Try it yourself: xref:developer:try-it/failure-drills.adoc#_10_a_capture_repeated_by_a_retry[failure drill 10].
+
+== A capture that fails
+
+A different case with the same command: the provider refuses the capture, for example because the
+authorization expired. The parcel has already left, so nothing is cancelled: the order stays
+`SHIPPED` and its payment becomes `OVERDUE`. The money is owed, and operations collect it
+(xref:operations:payments.adoc[Runbook: payments]).
+
+Decision record: xref:adr/0009-payments-driven-by-order-service.adoc[ADR-0009].

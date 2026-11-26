@@ -15,13 +15,13 @@ digraph order_lifecycle {
 
 
   start -> PLACED [label=" order placed"];
-  PLACED -> CONFIRMED [label="stock reserved"];
+  PLACED -> CONFIRMED [label="stock reserved\nand payment authorized"];
   CONFIRMED -> SHIPPED [label="handed to carrier"];
   SHIPPED -> DELIVERED [label="delivery confirmed"];
   CONFIRMED -> CANCELLATION_REQUESTED [label="customer cancels\nnot dispatched in 3 days"];
   CANCELLATION_REQUESTED -> CANCELLED [label="parcel stopped"];
   CANCELLATION_REQUESTED -> SHIPPED [label="parcel had already left"];
-  PLACED -> CANCELLED [label="no stock\ncustomer cancels\nnot confirmed in 30 min"];
+  PLACED -> CANCELLED [label="no stock\ncard declined\ncustomer cancels\nnot confirmed in 30 min"];
 }
 ----
 
@@ -30,11 +30,12 @@ digraph order_lifecycle {
 |State |Meaning |Customer can cancel?
 
 |Placed
-|The order is stored with the prices of that moment; stock is being reserved.
+|The order is stored with the prices of that moment; stock is being reserved, then the amount held
+on the card.
 |Yes, immediately.
 
 |Confirmed
-|Stock is reserved; a parcel is being prepared.
+|Stock is reserved and the amount held on the card; a parcel is being prepared.
 |Yes, as a request: the answer follows shortly.
 
 |Cancellation requested
@@ -42,7 +43,7 @@ digraph order_lifecycle {
 |Already requested.
 
 |Shipped
-|The parcel is with the carrier; the stock has left the warehouse.
+|The parcel is with the carrier; the stock has left the warehouse and the money is taken.
 |No. Later: a return.
 
 |Delivered
@@ -50,7 +51,7 @@ digraph order_lifecycle {
 |No. Later: a return.
 
 |Cancelled
-|Final. Any reserved stock is available again.
+|Final. Any reserved stock is available again, and any hold on the card is released.
 |—
 |===
 
@@ -60,3 +61,30 @@ Once a parcel is prepared, only the warehouse knows whether it has left. If the 
 own, an order could be cancelled and refunded while the parcel is on its way. So the shop asks, and
 the warehouse answers: stopped, or already gone. Either answer leaves stock, order and parcel
 in agreement.
+
+== When the customer pays
+
+[cols="1,3"]
+|===
+|Moment |Money
+
+|Order confirmed
+|The amount is *held* on the card (authorized). Nothing is taken yet.
+
+|Parcel handed to the carrier
+|The money is *taken* (captured). Customers pay for goods that are on their way, not for promises.
+
+|Order cancelled before that
+|The hold is *released* (voided). The customer was never charged.
+
+|Card declined
+|The order is cancelled with "Payment declined", and the stock is free again.
+
+|Provider does not answer
+|The order waits as Placed: not declined, not charged twice. After 30 minutes without an answer it is
+cancelled, and any hold released.
+|===
+
+If the money cannot be taken when the parcel leaves (for example, the hold expired), the parcel is
+not called back: the order stays Shipped and the payment becomes *overdue*, for the back office to
+collect. A refund after a return follows with returns (s09).

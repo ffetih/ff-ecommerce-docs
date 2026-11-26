@@ -34,13 +34,15 @@ curl -s -X POST $GW/customers/me -H "Authorization: Bearer $ALICE" -H "$J" \
 
 KEY=$(cat /proc/sys/kernel/random/uuid)
 ORDER=$(curl -s -X POST $GW/orders -H "Authorization: Bearer $ALICE" -H "$J" -H "Idempotency-Key: $KEY" \
-  -d "{\"lines\":[{\"sku\":\"$SKU\",\"quantity\":2}]}" | jq -r .id)
+  -d "{\"cardToken\":\"tok_ok\",\"lines\":[{\"sku\":\"$SKU\",\"quantity\":2}]}" | jq -r .id)
 echo $ORDER
-curl -s $GW/orders/$ORDER -H "Authorization: Bearer $ALICE" | jq '{status, totalAmount}'
+curl -s $GW/orders/$ORDER -H "Authorization: Bearer $ALICE" | jq '{status, paymentStatus, totalAmount}'
 ----
 
-Expect `CONFIRMED` within a second. In Kafka UI, `order.lifecycle` shows `order-placed` and
-`order-confirmed`, and `catalog.reservations` shows `stock-reserved`, all with the order id as key.
+Expect `CONFIRMED` with `paymentStatus` `AUTHORIZED` within a second. In Kafka UI, `order.lifecycle`
+shows `order-placed` and `order-confirmed`, `catalog.reservations` shows `stock-reserved`,
+`payment.commands` shows `authorize-payment` and `payment.events` shows `payment-authorized`, all with
+the order id as key. `cardToken` is the payment method; the simulated provider approves `tok_ok`.
 
 Send the same order request again with the same `$KEY`: the answer is the same order, `200`, with
 `Idempotent-Replayed: true` (add `-i` to see the headers).
@@ -51,7 +53,7 @@ Send the same order request again with the same `$KEY`: the answer is the same o
 ----
 SHIP=$(curl -s "$GW/shipments?orderId=$ORDER" -H "Authorization: Bearer $ADMIN" | jq -r .id)
 curl -s -X POST $GW/shipments/$SHIP/dispatch -H "Authorization: Bearer $ADMIN" | jq '{status, trackingNumber}'
-curl -s $GW/orders/$ORDER -H "Authorization: Bearer $ALICE" | jq .status     # SHIPPED
+curl -s $GW/orders/$ORDER -H "Authorization: Bearer $ALICE" | jq '{status, paymentStatus}'   # SHIPPED, CAPTURED
 curl -s $GW/stock/$SKU -H "Authorization: Bearer $ADMIN" | jq                 # onHand 8, reserved 0
 curl -s -X POST $GW/shipments/$SHIP/deliver -H "Authorization: Bearer $ADMIN" | jq .status
 curl -s $GW/orders/$ORDER -H "Authorization: Bearer $ALICE" | jq .status     # DELIVERED
@@ -68,4 +70,6 @@ curl -s -X POST $GW/orders/$ORDER2/cancel -H "Authorization: Bearer $ALICE" -H "
   -d '{"reason":"changed my mind"}' -w '\n%{http_code}\n'
 ----
 * Cancel the delivered order: `409`.
+* Pay with `tok_decline`: the order becomes `CANCELLED` with "Payment declined: Card declined", and
+  the stock is available again.
 * Read alice's order with bob's token (`$(token bob)`): `404`, as if it did not exist.

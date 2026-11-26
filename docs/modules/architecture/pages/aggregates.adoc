@@ -19,7 +19,10 @@ xref:business:domain-model.adoc[domain model: contexts and language].
 |The total is computed from the lines, never accepted from the client. At most 50 lines; one
 currency; every SKU once; shipping address required, at most 500 characters. Status only moves
 forward: `cancel` only from PLACED, `requestCancellation` only from CONFIRMED, `deliver` only from
-SHIPPED. An impossible step throws `IllegalOrderTransitionException`.
+SHIPPED. An impossible step throws `IllegalOrderTransitionException`. Requires a card token. Its
+`paymentStatus` decides when money must be held, taken or released: `stockReserved` asks for the
+authorization, only `paymentAuthorized` confirms, `ship` asks for the capture, and a cancellation
+while money is held asks for the void.
 
 |`OrderLine` (value object)
 |SKU, quantity, the unit price frozen at placing, line total.
@@ -73,6 +76,34 @@ cancellation of the same shipment cannot both commit.
 |One shipment per order
 |Enforced by the database (unique `order_id`), whatever happens to the events that create it.
 |===
+
+== Payment (payment-service)
+
+[cols="1,3"]
+|===
+|Element |Rules it enforces
+
+|`Payment` (aggregate root)
+|One per order. `AUTHORIZING -> AUTHORIZED -> CAPTURING -> CAPTURED` or `CAPTURE_FAILED`;
+`AUTHORIZING -> DECLINED`; `AUTHORIZED -> VOIDING -> VOIDED`. The -ING states mean a provider call
+has no known outcome yet. A void requested while authorizing is remembered (`voidRequested`) and
+applied when the approval arrives. Captured money cannot be voided. Each operation has a stable
+idempotency key, `<paymentId>:<operation>`.
+
+|`LedgerTransaction` with `LedgerEntry` lines
+|At least two entries, one currency, summing to zero; built only from a captured payment. The
+database enforces the same rules again, makes booking idempotent by `reference`, and refuses updates
+and deletes.
+
+|`Money` (value object)
+|Positive, with exactly the currency's decimals: more decimals are rejected, never rounded. Payment's
+own copy.
+|===
+
+*Why the provider call is outside the aggregate's transaction.* The payment is saved in its -ING state
+before the call and changed again after it, in two short transactions; nothing waits for the network
+with a database lock held. The row lock in the second transaction serializes the command handler and
+the resolver when both get an answer.
 
 == Customer (customer-service)
 

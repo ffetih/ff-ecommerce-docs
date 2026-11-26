@@ -36,7 +36,7 @@ the console exchanges for tokens (for example with `oidc-client-ts`).
 |Client |`shop` (public, standard flow, PKCE `S256`)
 |Redirect URI |`http://localhost:5173/*`
 |Web origins |`http://localhost:5173` (the browser calls Keycloak's token endpoint directly)
-|Audiences in the token |all four services (roles, not audiences, separate customers from the back office)
+|Audiences in the token |all five services (roles, not audiences, separate customers from the back office)
 |Test users |`alice` / `alice`, `bob` / `bob`, `admin` / `admin`
 |===
 
@@ -57,6 +57,11 @@ never send an expired one.
 
 == Placing an order exactly once
 
+The order body carries the payment method as `cardToken`. In this project the provider is
+simulated and the token chooses its answer: `tok_ok` (approved), `tok_decline`, `tok_slow` (answers
+late), `tok_capture_fails` (the money cannot be taken at dispatch). A real shop gets the token from
+the provider's payment form; card numbers never reach the backend.
+
 Every order needs an `Idempotency-Key` header (a UUID). Create the key *when the order form opens*,
 send it with every attempt for that order, including retries after a timeout or a `503`, and create a
 new one only for a new order.
@@ -67,7 +72,8 @@ new one only for a new order.
 
 |`201` |Order placed.
 |`200` + `Idempotent-Replayed: true` |The same order again: a retry of a request that had already succeeded.
-|`409` |The key was used for a different order. A bug in the client: never reuse a key for new content.
+|`400` |Invalid input, for example no `cardToken`.
+|`409` |The key was used for a different order (including a different card). A bug in the client: never reuse a key for new content.
 |`422` |Unknown or retired product, or inactive customer. Show the problem's `detail`.
 |`503` + `Retry-After` |A dependency is down. Retry with *the same* key.
 |===
@@ -81,8 +87,9 @@ The order is accepted before the saga has finished; the console polls `+GET /api
 |After |Poll until
 
 |Placing (`PLACED`)
-|`CONFIRMED`, or `CANCELLED` (for example no stock; the reason is in `cancellationReason`).
-Usually under a second.
+|`CONFIRMED`, or `CANCELLED` (no stock, or the card was declined; the reason is in
+`cancellationReason`). Usually under a second; longer while the payment provider is slow
+(`paymentStatus` stays `AUTHORIZING`). Show "waiting for payment" then, not an error.
 
 |Cancel answered `200`
 |Nothing: the order is `CANCELLED`.
@@ -93,6 +100,10 @@ Usually under a second.
 |Cancel answered `409`
 |Nothing: the order has shipped and cannot be cancelled.
 |===
+
+Each order also has a `paymentStatus`: `AUTHORIZED` (money held), `CAPTURED` (taken at dispatch),
+`VOIDED` (released after a cancellation), `DECLINED`, or `OVERDUE` (shipped, but the money could not be
+taken; a back-office matter). Customers mostly need "paid" versus "not charged".
 
 Poll with a short interval (for example 500 ms, backing off to a few seconds) and stop at a final
 state or after a timeout, showing "still processing" rather than an error.
