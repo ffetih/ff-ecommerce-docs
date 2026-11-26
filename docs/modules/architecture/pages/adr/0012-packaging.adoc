@@ -1,7 +1,7 @@
 = ADR-0012: Packaging with Jib images and a one-command compose stack
 :description: How each service becomes an image, where the images live, and how the whole system starts with one command.
 
-* *Status:* Proposed
+* *Status:* Accepted (implemented in s11)
 * *Date:* 2026-11-26
 
 == Context

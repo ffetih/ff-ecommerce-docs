@@ -54,5 +54,5 @@ alternatives that were rejected. New records follow the xref:adr/0000-template.a
 
 |xref:adr/0012-packaging.adoc[ADR-0012]
 |Packaging with Jib images and a one-command compose stack
-|Proposed
+|Accepted
 |===

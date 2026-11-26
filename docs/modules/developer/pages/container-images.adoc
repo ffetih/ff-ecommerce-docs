@@ -166,7 +166,10 @@ runs:
 ./mvnw -B -ntp -DskipTests -Dimage.tag=${GITHUB_SHA::7} -Djib.to.tags=main package jib:build
 ----
 
-`jib:build` pushes straight to the registry, without Docker. Each image gets two tags: the commit's
+`jib:build` pushes straight to the registry, without Docker. The layers pay off on the other side
+too: after the first publish, `docker pull ghcr.io/ffetih/ff-ecommerce/order-service:main` on a machine
+that had built the images locally downloaded 4 of its 12 layers; the other 8 (base image and
+dependencies) were "Already exists". Each image gets two tags: the commit's
 short SHA (immutable, what a cluster deploys) and `main` (moves with every push). Pull requests and
 sprint branches only test; an image exists only for code that passed on `main`.
 

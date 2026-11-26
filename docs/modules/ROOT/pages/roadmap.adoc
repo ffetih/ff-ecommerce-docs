@@ -20,8 +20,8 @@ decisions are recorded as ADRs, *these docs are updated*, and the sprint is tagg
 |s08 |Payments |payment-service commanded by order-service (ADR-0009): authorize before confirming, capture at dispatch, void on cancellation; idempotency keys per provider call; unknown outcomes resolved, never declined; a double-entry ledger the database keeps balanced; three new failure stories |done
 |s09 |Returns |Returns in order-service (ADR-0010): within 14 days of delivery, never more than was bought (a database-enforced counter per order line); refund when the goods arrive back, never more than was captured; restock idempotent by return; three new failure stories |done
 |s10 |Observability |One trace per order through HTTP, Kafka and the outbox (OpenTelemetry, Jaeger); Prometheus scraping with its own Keycloak client; Grafana dashboard and four alert rules as code; the drill's trace exposed a relay attempt blocking a minute, now capped at the send timeout; one new failure story |done
-|s11 |Packaging |Images built by Jib and pushed to GHCR from CI; the whole system with one command (`docker compose --profile app up`); one token issuer inside and outside containers |next
-|s12 |Kubernetes and GitOps |A k3d cluster synced by Flux: infrastructure as Helm releases (Strimzi, CloudNativePG, Keycloak, Prometheus stack, Jaeger), services as Kustomize; Kafka users and ACLs; image automation; alerts delivered |planned
+|s11 |Packaging |Images built by Jib and pushed to GHCR from CI; the whole system with one command (`docker compose --profile app up`); one token issuer inside and outside containers |done
+|s12 |Kubernetes and GitOps |A k3d cluster synced by Flux: infrastructure as Helm releases (Strimzi, CloudNativePG, Keycloak, Prometheus stack, Jaeger), services as Kustomize; Kafka users and ACLs; image automation; alerts delivered |next
 |s13+ |Optional |Marketplace (sellers, orders split per seller, split payments and payouts); promotions; back-in-stock notifications |optional
 |===
 
@@ -29,11 +29,10 @@ A web console (customer shop and back-office saga view) is built in parallel in
 {ui-repo}[ff-ecommerce-ui] (see xref:developer:web-console.adoc[Web console] and
 xref:developer:ui-integration.adoc[API and login for the UI]).
 
-== Next: s11 Packaging, then s12 Kubernetes and GitOps
+== Next: s12 Kubernetes and GitOps
 
-Today the services run from an IDE and the infrastructure from compose. s11 makes each service an
-image (Jib, no Dockerfile), publishes the images to GitHub Container Registry from CI, and starts the
-whole system with one command (xref:architecture:adr/0012-packaging.adoc[ADR-0012]).
+Since s11 each service is an image (Jib, no Dockerfile), published to GitHub Container Registry from
+CI, and the whole system starts with one command (xref:architecture:adr/0012-packaging.adoc[ADR-0012]).
 
 s12 takes the same images to Kubernetes: a k3d cluster that Flux keeps in sync with the repository,
 third-party components as Helm releases, our services as Kustomize, Kafka with a user and ACLs per
