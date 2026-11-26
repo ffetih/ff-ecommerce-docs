@@ -1,0 +1,74 @@
+= ADR-0012: Packaging with Jib images and a one-command compose stack
+:description: How each service becomes an image, where the images live, and how the whole system starts with one command.
+
+* *Status:* Proposed
+* *Date:* 2026-11-26
+
+== Context
+
+Until s10 the services run from an IDE or `./mvnw spring-boot:run`, next to infrastructure in compose.
+That is fine for whoever wrote the code and useless for anyone else: a reviewer, a colleague, a
+cluster. Three things are missing:
+
+* *An artefact per service* that runs the same on a laptop, in CI and in Kubernetes.
+* *One command* that starts the whole system, services included, for a demo or a drill.
+* *A registry* the images live in, so that a cluster (s12) can pull them and GitOps can follow new
+  versions.
+
+Running in containers also breaks an assumption the code has made so far: that every address is
+`localhost`. Inside the compose network Kafka is `kafka:29092` and Keycloak `keycloak:8080`, while the
+browser and `curl` still see `localhost:8180`. Tokens carry the issuer they were requested from, and
+the services insist on one issuer (ADR-0008).
+
+== Decision
+
+*Images are built by Jib*, the Maven plugin, configured once in the parent POM:
+
+* No Dockerfile. Jib puts dependencies, resources and classes in separate layers, so a code change
+  rebuilds and pushes only the small top layer.
+* No Docker daemon needed to build and push (`jib:build`); `jib:dockerBuild` loads the image into the
+  local Docker for compose.
+* Base image `eclipse-temurin:25-jre`, pinned. The process runs as a non-root user. The JVM sizes its
+  heap from the container's memory limit (`-XX:MaxRAMPercentage`), not from the host's.
+* Reproducible by default: the same inputs give the same image digest.
+
+*Images live in GitHub Container Registry*, as `ghcr.io/ffetih/ff-ecommerce/<service>`, tagged with
+the commit's short SHA (immutable, what a cluster deploys) and with the project version. CI builds
+them on every run and pushes them only from `main`, after all tests have passed.
+
+*One command starts the whole system:* `docker compose --profile app up -d` runs the six services as
+containers next to the infrastructure; `--profile observability` adds Jaeger, Prometheus and Grafana.
+The services are configured only through environment variables, so the same image runs unchanged in
+compose and, in s12, in Kubernetes. Each service has a health check; compose starts a service when
+what it depends on is healthy.
+
+*One issuer, wherever the token is requested.* Keycloak gets a fixed public URL
+(`KC_HOSTNAME=http://localhost:8180`), so every token says `iss: http://localhost:8180/realms/ecommerce`,
+whether bob asked from the browser or order-service from inside the network. The services keep
+checking that issuer, but fetch the signing keys and their own tokens from the internal address
+(`jwk-set-uri`, `token-uri` pointing at `keycloak:8080`). Nothing changes for the browser, `curl`, the
+UI, or the services when run from the IDE.
+
+== Consequences
+
+* Anyone with Docker can run the system: clone, `docker compose --profile app up -d`, open the UI.
+* The parent POM owns how images are built; a new service gets an image by inheriting it.
+* CI gains a step and a permission (`packages: write`), and the registry fills with one image per
+  service per commit to `main`; old tags need a retention rule eventually.
+* Two Keycloak addresses exist in configuration (public for the issuer, internal for the calls). The
+  difference is written down once, in the compose file and the configuration reference.
+* The images are what s12 deploys: Kubernetes and GitOps start from a registry that is already filled.
+
+== Alternatives considered
+
+* *Cloud Native Buildpacks* (`spring-boot:build-image`). Spring Boot's own route and a good default,
+  but it needs a Docker daemon to build, is slower, and produces larger images. Jib also pushes from
+  CI without Docker.
+* *A Dockerfile per service.* Full control, but six files to keep in step, and the layering that makes
+  rebuilds fast has to be written and maintained by hand.
+* *GraalVM native images.* Start in milliseconds and use less memory, but build for minutes and need
+  reflection hints for Hibernate, Kafka and Jackson. Worth it for scale-to-zero, not for this system.
+* *Docker Hub instead of GHCR.* GHCR sits next to the code, authenticates with the workflow's own
+  token, and has no pull limits for public images.
+* *Fixing the issuer with an `/etc/hosts` entry or `host.docker.internal`.* Works on one machine,
+  breaks on the next; a fixed Keycloak hostname is explicit and carries over to Kubernetes.

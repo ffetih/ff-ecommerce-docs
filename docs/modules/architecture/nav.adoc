@@ -30,3 +30,4 @@
 ** xref:adr/0009-payments-driven-by-order-service.adoc[ADR-0009: Payments]
 ** xref:adr/0010-returns-in-order-service.adoc[ADR-0010: Returns]
 ** xref:adr/0011-observability.adoc[ADR-0011: Observability]
+** xref:adr/0012-packaging.adoc[ADR-0012: Packaging]
