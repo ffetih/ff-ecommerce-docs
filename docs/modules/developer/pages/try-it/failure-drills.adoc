@@ -348,15 +348,18 @@ Watch payment-service's console (or log) meanwhile.
 |Moment |What you see
 
 |Right after placing
-|Order `PLACED`, payment `AUTHORIZING`; payment-service's row `AUTHORIZING`, `held` false. The stock is
-reserved. payment-service logs `No answer to AUTHORIZE of payment …; asking again later`.
+|Order `PLACED, payment AUTHORIZING`, shipment `none`, one unit reserved; payment-service's row
+`AUTHORIZING`, `held` false, no ledger entries. payment-service logs
+`No answer to AUTHORIZE of payment …; asking again later`.
 
 |About 30–45 s later
 |Order `CONFIRMED`, payment `AUTHORIZED`, shipment `CREATED`. payment-service logs `Asked the provider
 again about 1 payment(s)`: the resolver asked with the same key and got the hold that was placed.
 |===
 
-The order was never declined and never charged twice; it only waited.
+The order was never declined and never charged twice; it only waited. In the first snapshot the
+system says "I don't know" although the simulated provider had in fact placed the hold: only its
+answer was lost. That is the honest answer; "declined" would have been wrong.
 
 === Break it
 
@@ -384,11 +387,25 @@ docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstra
   | grep $ORDER | cut -f2- | jq -c '{type: .eventType}'
 ----
 
-Cancel answers `200`: the order was still `PLACED`, so it is cancelled at once, the stock released,
-and `void-payment` sent. payment-service remembers the void, asks the provider again right away, gets
-the approval and releases the hold immediately: the order shows `CANCELLED, payment VOIDED`, the
-payment row `VOIDED` with `void_requested` true. On `payment.events` the order has exactly one event,
-`payment-voided`: never `payment-authorized`.
+In a run, three seconds after placing:
+
+[source]
+----
+cancel   -> 200
+order    = CANCELLED, payment VOIDED
+shipment = none
+ status | void_requested | held
+ VOIDED | t              | t
+(ledger: 0 rows)
+----
+
+The order was still `PLACED`, so the cancellation was immediate, the stock released, and
+`void-payment` sent. `void_requested = t` is the point of the story: the cancellation arrived while
+the authorization had no answer, and payment-service remembered it. `held = t` shows why that
+matters: the provider had placed a hold, which would otherwise have stayed on the card of a cancelled
+order. It took seconds, not 30: the void request made payment-service ask the provider again at once,
+with the same key; the approval came back and was released straight away. On `payment.events` the
+order has exactly one event, `payment-voided`: never `payment-authorized`.
 
 === Break it
 
@@ -415,10 +432,22 @@ send_event payment.commands $ORDER payment.capture-payment "{\"orderId\":\"$ORDE
 sleep 3; payment $ORDER
 ----
 
-After the dispatch: order `SHIPPED, payment CAPTURED`; the payment row `CAPTURED`; one ledger
-transaction, `CAPTURE`: `PROVIDER_RECEIVABLE 5.00` and `SALES -5.00`. After the replayed command:
-exactly the same. The payment was already `CAPTURED`, so the command changed nothing and the provider
-was not called.
+In a run:
+
+[source]
+----
+dispatch -> 200
+order    = SHIPPED, payment CAPTURED
+  status  | void_requested | held
+ CAPTURED | f              | t
+  kind   |       account       | amount | currency
+ CAPTURE | PROVIDER_RECEIVABLE |   5.00 | EUR
+ CAPTURE | SALES               |  -5.00 | EUR
+----
+
+After the replayed command, `payment` prints exactly the same. The command had a new event id, so the
+inbox did not recognise it; the payment's state machine did: a `CAPTURED` payment ignores a capture
+request, so the provider was not called and nothing was booked.
 
 And the ledger defends itself, whatever code writes to it:
 
@@ -428,7 +457,9 @@ docker compose exec -T -e PGPASSWORD=payment_service postgres psql -h localhost 
   -c "update ledger_entries set amount = 0.01"
 ----
 
-`ERROR: The ledger is append-only: UPDATE on ledger_entries is not allowed`.
+`ERROR: The ledger is append-only: UPDATE on ledger_entries is not allowed`. The refusal comes from
+a database trigger, not from Java: a manual "fix" in SQL or a buggy future service cannot rewrite
+the books either.
 
 === Break it
 
