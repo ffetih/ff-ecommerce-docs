@@ -1,38 +1,45 @@
 = Orders that stop moving
 :description: An event the next step needs ends in a dead-letter topic, and the order waits forever.
 
-// Story to write in your own words. Keep the four sections; delete the NOTE block when done.
-
 == The scenario
 
-An event the next step needs ends in a dead-letter topic, and the order waits forever.
+A saga step does not happen: the event it needs ends in a dead-letter topic, or never leaves its
+service. The order simply stops. A `PLACED` order whose `stock-reserved` never arrives waits for a
+confirmation that will not come; a `CONFIRMED` order that nobody dispatches waits for a parcel that
+will not leave.
 
 == What would go wrong
 
-// Without the fix: which services disagree, and what does a customer or the warehouse see?
+Both keep their stock: the reservation is held, available stock is lower, and other customers may
+be told "out of stock" for units nobody will ever buy. The customer sees an order that never moves,
+with no answer and no end. Nothing in the system would ever release it.
 
 == The fix
 
-// What the system does now, and why this service is the one that decides.
+Order-service scans for orders that have stayed `PLACED` (30 minutes) or `CONFIRMED` (3 days) too
+long. A placed order is cancelled ("Not confirmed in time"), which releases its stock. A confirmed
+order is only asked to cancel ("Not dispatched in time"), through the same gate a customer uses, so
+shipping still decides and expiry can never overtake a dispatch. A cancellation already requested has
+no timer: it waits for shipping's answer. Each order expires in its own transaction, locked with
+`FOR UPDATE SKIP LOCKED`, so several instances can scan at once. Expiry hides the cause, so it is
+only safe together with the dead-letter metric.
 
 == How it is proven
 
-* `OrderExpiryIT` (both timeouts, untouched states, two scanners at once)
+* `OrderExpiryIT` (both timeouts, states left alone, two scanners at once)
+
+In a manual run with the timeouts shortened to 1 and 2 minutes, two old confirmed orders were asked
+to cancel, shipping stopped their parcels, and their 2 reserved units were released. With Kafka
+stopped, a new order stayed `PLACED` and was cancelled after a minute, "Not confirmed in time":
+expiry needs only order-service's own database. When Kafka was back, catalog received
+`order-placed` and `order-cancelled` in that order, reserved and released, and the stock ended where
+it started.
 
 Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
 
 == When it happens in production
 
-See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts].
+See xref:operations:metrics.adoc[Metrics and alerts] (find the cause) and
+xref:operations:configuration.adoc[Configuration reference] (the timeouts).
 
 Decision record: xref:adr/0007-order-saga.adoc[ADR-0007].
-
-[NOTE]
-.Facts to build on (remove when the story is written)
-====
-* A PLACED order whose stock-reserved never arrives keeps its reservation; a CONFIRMED order nobody dispatches holds stock indefinitely.
-* Fix: order expiry in order-service. PLACED for 30 minutes is cancelled ("Not confirmed in time"); CONFIRMED for 3 days is asked to cancel ("Not dispatched in time") through the same gate a customer uses, so expiry can never overtake a dispatch.
-* CANCELLATION_REQUESTED has no timer: it waits for shipping's answer.
-* Each order expires in its own transaction, locked with FOR UPDATE SKIP LOCKED, so several instances can scan at once.
-* Trade-off: expiry hides the cause, so it is only safe together with the dead-letter metric.
-====

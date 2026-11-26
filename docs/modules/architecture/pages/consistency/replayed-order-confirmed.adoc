@@ -1,35 +1,39 @@
 = A replayed order-confirmed
 :description: An order's confirmation was dead-lettered, shipping accepted its cancellation without a shipment, and later someone replays the dead letter.
 
-// Story to write in your own words. Keep the four sections; delete the NOTE block when done.
-
 == The scenario
 
-An order's confirmation was dead-lettered, shipping accepted its cancellation without a shipment, and later someone replays the dead letter.
+An order's `order-confirmed` never reached shipping: it ended in a dead-letter topic. The order is
+then cancelled. Shipping has no shipment for it, so it accepts the cancellation at once, the order
+becomes `CANCELLED`, and catalog releases the stock. Days later someone fixes the cause and replays
+the dead letter: the confirmation arrives after all.
 
 == What would go wrong
 
-// Without the fix: which services disagree, and what does a customer or the warehouse see?
+Shipping's "yes, cancelled" left no trace in its own database: its only state is its shipments, and
+there was nothing to cancel. So the late confirmation looked like any normal confirmed order without
+a shipment yet, and shipping created one. The warehouse would pack and dispatch a parcel for a
+cancelled order whose stock was already released, and catalog would refuse to commit that stock.
 
 == The fix
 
-// What the system does now, and why this service is the one that decides.
+A decision must leave a trace in the service that made it. When shipping accepts a cancellation
+without a shipment, it records the order in `cancelled_orders`, in the same transaction as its
+answer. A confirmation for a recorded order creates nothing and logs a warning instead. Ordering per
+key still holds: the replay only matters because it arrives after the cancellation.
 
 == How it is proven
 
 * `ShippingSagaIT`
 
+In a manual run, an order that catalog could not reserve was cancelled before shipping heard of it.
+A cancellation request then left a row in `cancelled_orders`, and a late `order-confirmed` for the
+same order created no shipment: shipping still showed none.
+
 Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
 
 == When it happens in production
 
-See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts].
+See xref:operations:dead-letters.adoc[Runbook: dead letters]: replaying is safe because of this guard.
 
 Decision record: xref:adr/0007-order-saga.adoc[ADR-0007].
-
-[NOTE]
-.Facts to build on (remove when the story is written)
-====
-* Without a guard, the replay creates a shipment for an order whose stock is already released.
-* Fix: when shipping accepts a cancellation without a shipment, it records the order in cancelled_orders; a later order-confirmed for it creates nothing and logs a warning.
-====

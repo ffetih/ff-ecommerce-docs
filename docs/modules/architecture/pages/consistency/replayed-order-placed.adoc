@@ -1,37 +1,42 @@
 = A replayed order-placed
 :description: `order-placed` arrives again after the order was cancelled and its reservation released, and the inbox no longer recognises it.
 
-// Story to write in your own words. Keep the four sections; delete the NOTE block when done.
-
 == The scenario
 
-`order-placed` arrives again after the order was cancelled and its reservation released, and the inbox no longer recognises it.
+An order was reserved, then cancelled, and catalog released its stock. Later the same `order-placed`
+arrives again with an id the inbox does not recognise, for example replayed from a dead-letter topic
+or after the inbox has forgotten it. Catalog finds a reservation for this order with exactly the same
+lines.
 
 == What would go wrong
 
-// Without the fix: which services disagree, and what does a customer or the warehouse see?
+Catalog treated a matching reservation as a retry and gave the same answer again: `stock-reserved`.
+But that reservation was released; no stock was held. The saga survived it, because a cancelled
+order ignores the answer and releases again, which changes nothing. But catalog stated something
+false, and once payments follow a reservation, a false "reserved" can cost real money. Idempotency
+means the same effect, not the same words when they are no longer true.
 
 == The fix
 
-// What the system does now, and why this service is the one that decides.
+A reservation lives once: `RESERVED`, then `COMMITTED` or `RELEASED`, never again. Catalog refuses
+to reserve for an order whose reservation was released and answers `stock-reservation-failed`,
+saying why; over HTTP the same request gets `409`. The rule spans the stored reservation and the new
+request, so it lives in the application service, not in one aggregate.
 
 == How it is proven
 
 * `SagaParticipationIT`
 * `ReservationLifecycleIT`
 
+In a manual run, an order was reserved (3 units reserved for the SKU), cancelled (2), and its
+`order-placed` replayed with a new event id: the count stayed at 2, the order stayed `CANCELLED`,
+and catalog's answers for the order were `stock-reserved`, then `stock-reservation-failed` with
+"the reservation for order … was released; an order reserves stock once, a new order needs a new id".
+
 Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
 
 == When it happens in production
 
-See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts].
+See xref:operations:dead-letters.adoc[Runbook: dead letters].
 
 Decision record: xref:adr/0007-order-saga.adoc[ADR-0007].
-
-[NOTE]
-.Facts to build on (remove when the story is written)
-====
-* Catalog found an existing reservation with the same lines and answered stock-reserved, for stock nobody held.
-* The saga survived it (order-service repeated the cancellation), but catalog stated something false.
-* Fix: a RELEASED reservation is refused; over Kafka the answer is stock-reservation-failed, which a cancelled order ignores; over HTTP it is 409.
-====

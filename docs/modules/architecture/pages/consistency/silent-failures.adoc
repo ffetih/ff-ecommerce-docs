@@ -1,24 +1,38 @@
 = Failures nobody sees
 :description: Events stop reaching Kafka, or a consumer gives up on one, and nothing tells anyone.
 
-// Story to write in your own words. Keep the four sections; delete the NOTE block when done.
-
 == The scenario
 
-Events stop reaching Kafka, or a consumer gives up on one, and nothing tells anyone.
+Two failures stay silent. A message that a consumer cannot process is retried, then set aside in a
+dead-letter topic, and the partition moves on. Events that cannot leave a service wait in its outbox,
+for example while Kafka is down. In both cases no request fails and nobody sees an error: the
+customer gets an answer, and the saga simply stops moving for that order.
 
 == What would go wrong
 
-// Without the fix: which services disagree, and what does a customer or the warehouse see?
+Without measurement, an order whose next step never happens just waits. Stock stays reserved, no
+parcel is prepared, and nobody knows why. Order expiry would eventually cancel it, which looks like
+an ordinary timeout and hides the real cause: a message that was never processed, or never sent.
 
 == The fix
 
-// What the system does now, and why this service is the one that decides.
+Every service that uses the messaging module reports three metrics. `outbox.pending` and
+`outbox.oldest.pending.age` show whether events are leaving; the age is the one to alert on, when it
+stays above a minute. `messaging.dead.letters`, tagged by topic and exception, counts every record
+set aside; any increase deserves a look. The gauges read the database each time; a failed read
+reports `NaN`, not `0`, so an outage never looks healthy. A dead letter is counted only after the
+dead-letter topic has accepted it.
 
 == How it is proven
 
 * `OutboxMetricsIT`
 * `InboxIT` (dead-letter counter)
+
+In a manual run, one unreadable message on `shipping.shipments` raised the counter by one, tagged
+`MalformedEventException`, without retries. Because order-service and catalog-service both consume
+that topic, it became two dead letters. With Kafka stopped, an order was still accepted; the outbox
+held its event, and the age grew from 2 to 17 seconds. When Kafka was back, the outbox emptied by
+itself and the order moved on to `CONFIRMED`.
 
 Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
 
@@ -27,12 +41,3 @@ Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
 See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts].
 
 Decision record: xref:adr/0005-transactional-outbox-and-inbox.adoc[ADR-0005].
-
-[NOTE]
-.Facts to build on (remove when the story is written)
-====
-* An outbox stuck behind a failing message keeps other services from hearing about changes.
-* A dead-lettered record is a saga step that did not happen; nothing retries it.
-* Fix: `outbox.pending`, `outbox.oldest.pending.age` and `messaging.dead.letters{topic, exception}` in every service using the messaging module.
-* A failed read reports NaN, not a reassuring zero; a dead letter is counted only after the dead-letter topic has taken it.
-====

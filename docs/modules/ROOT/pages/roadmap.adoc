@@ -16,7 +16,7 @@ decisions are recorded as ADRs, *these docs are updated*, and the sprint is tagg
 |s04 |Shipping and the saga |Reserve, confirm, ship, deliver, cancel with compensation; end-to-end tests |done
 |s05 |Security |Keycloak; resource servers with enforced deny-by-default; service tokens; routing-only gateway |done
 |s06 |Saga hardening |Cancellation decided by shipping; delivery only after dispatch; order expiry; outbox and dead-letter metrics; replay guards; inbox retention |done
-|s07 |Documentation |This site: role-based guides, domain model, failure stories with live drills, runbooks |in progress (failure stories: 2 of 7)
+|s07 |Documentation |This site: role-based guides, domain model, failure stories with live drills, runbooks |done
 |s08 |Payments |A payment service: authorize before confirming, capture at dispatch, void on cancellation; idempotent payment calls; a double-entry ledger; timeouts that are not declines. Starts with a decision: does the saga stay choreographed, or does order-service orchestrate it? |next
 |s09 |Returns |Concurrency-safe return limits; refunds through payments |planned
 |s10 |Observability |Distributed tracing, dashboards, alerts |planned

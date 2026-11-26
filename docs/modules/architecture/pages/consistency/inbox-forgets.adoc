@@ -1,19 +1,27 @@
 = An inbox that forgets too early
-:description: A consumer group's offsets are lost (they expire while the service is down, or someone resets them), and Kafka delivers everything still in the topic again.
-
-// Story to write in your own words. Keep the four sections; delete the NOTE block when done.
+:description: A consumer group's offsets are lost, and Kafka delivers everything still in the topic again.
 
 == The scenario
 
-A consumer group's offsets are lost (they expire while the service is down, or someone resets them), and Kafka delivers everything still in the topic again.
+A consumer group loses its committed offsets: they expire while a service is down longer than Kafka
+keeps them, or an operator resets them. The group then starts again from the oldest record still in
+the topic, and every event of the last days is delivered a second time. The inbox recognises a
+redelivered event only as long as it still remembers the event's id.
 
 == What would go wrong
 
-// Without the fix: which services disagree, and what does a customer or the warehouse see?
+If the inbox had already forgotten those ids, every redelivered event would look new. Catalog would
+reserve stock again for old orders, shipping would answer old requests again, and orders would move
+in ways nobody asked for. The cause would be a retention setting changed weeks earlier, and nobody
+would connect the two.
 
 == The fix
 
-// What the system does now, and why this service is the one that decides.
+Every topic is created with an explicit retention (7 days), and the inbox keeps ids for 30 days, so
+an id is forgotten only after Kafka can no longer deliver its event. A service whose inbox
+retention is not longer than its topic retention refuses to start. The mistake surfaces at the
+moment of the change, in front of the person who made it, instead of weeks later as duplicates.
+Expired ids are deleted hourly, in batches.
 
 == How it is proven
 
@@ -21,18 +29,14 @@ A consumer group's offsets are lost (they expire while the service is down, or s
 * `InboxIT` (expiry)
 * `MessagingTopicsTest`
 
+Starting order-service with `ecommerce.messaging.inbox.retention=7d` stopped it before it opened its
+port or consumed a single event: "inbox.retention (PT168H) must be longer than topics.retention
+(PT168H): events Kafka can still redeliver would be processed again".
+
 Try it yourself: xref:developer:try-it/failure-drills.adoc[failure drills].
 
 == When it happens in production
 
-See xref:operations:dead-letters.adoc[Runbook: dead letters] and xref:operations:metrics.adoc[Metrics and alerts].
+See xref:operations:configuration.adoc[Configuration reference].
 
 Decision record: xref:adr/0005-transactional-outbox-and-inbox.adoc[ADR-0005].
-
-[NOTE]
-.Facts to build on (remove when the story is written)
-====
-* The inbox recognises a redelivered event only while it remembers the event id.
-* Fix: topics keep events 7 days, set explicitly; the inbox keeps ids 30 days; a service whose inbox retention is not longer than its topic retention does not start.
-* Expired ids are deleted hourly, in batches.
-====

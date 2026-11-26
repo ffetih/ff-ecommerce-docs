@@ -131,6 +131,45 @@ Both wait side by side in the dead-letter topic, to be replayed dispatch first
 
 Story: xref:architecture:consistency/stuck-orders.adoc[Orders that stop moving].
 
+=== Live
+
+Run order-service with expiry in minutes instead of 30 minutes and 3 days (stop the usual instance
+first):
+
+[source,bash]
+----
+./mvnw -q -pl order-service spring-boot:run -Dspring-boot.run.arguments="\
+--ecommerce.orders.expiry.placed-after=1m --ecommerce.orders.expiry.confirmed-after=2m \
+--ecommerce.orders.expiry.scan-interval=10s"
+----
+
+*Part A, confirmed too long.* Every `CONFIRMED` order older than two minutes is asked to cancel;
+shipping stops the parcels that have not left, and catalog releases their stock. After a scan,
+`reserved` for the drill SKU drops to 0 and bob's older orders show "Not dispatched in time":
+
+[source,bash]
+----
+curl -s "$GW/orders?customerId=b0b00000-0000-4000-8000-000000000002" -H "Authorization: Bearer $ADMIN" \
+  | jq -r '.[:8][] | "\(.status)\t\(.cancellationReason // "")"'
+----
+
+*Part B, placed too long.* With Kafka down, a new order cannot get its reservation:
+
+[source,bash]
+----
+reason() { curl -s $GW/orders/$1 -H "Authorization: Bearer $BOB" | jq -c '{status, cancellationReason}'; }
+docker compose stop kafka
+ORDER=$(place); reason $ORDER
+sleep 80; reason $ORDER
+docker compose start kafka
+sleep 25; show $ORDER
+----
+
+The order is `PLACED`, then `CANCELLED` with "Not confirmed in time" while Kafka is still down:
+expiry needs only order-service's database, and its `order-cancelled` waits in the outbox. Once
+Kafka is back, catalog receives `order-placed` and `order-cancelled` in that order (one topic, one
+key), reserves and releases, and the stock ends where it started.
+
 === Break it
 
 * *Change:* in `OrderJpaRepository.lockIfFree`, replace `FOR UPDATE SKIP LOCKED` with `FOR UPDATE`.
@@ -197,6 +236,31 @@ stuck either. Only the age does, which is why the alert is "oldest pending over 
 
 Story: xref:architecture:consistency/replayed-order-placed.adoc[A replayed order-placed].
 
+=== Live
+
+Reserve, cancel (the reservation is released), then deliver the same `order-placed` again with a new
+event id:
+
+[source,bash]
+----
+fresh
+ORDER=$(place); show $ORDER
+curl -s -o /dev/null -w 'cancel -> %{http_code}\n' -X POST $GW/orders/$ORDER/cancel \
+  -H "Authorization: Bearer $BOB" -H "$J" -d '{"reason":"changed my mind"}'
+sleep 4; show $ORDER
+send_event order.lifecycle $ORDER order.order-placed \
+  "{\"orderId\":\"$ORDER\",\"customerId\":\"b0b00000-0000-4000-8000-000000000002\",\"lines\":[{\"sku\":\"$SKU\",\"quantity\":1,\"unitPrice\":5.00}],\"totalAmount\":5.00,\"currency\":\"EUR\",\"shippingAddress\":\"Kadıköy 1, İstanbul\"}"
+sleep 3; show $ORDER
+# catalog's answers for this order
+docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+  --topic catalog.reservations --from-beginning --property print.key=true --timeout-ms 5000 2>/dev/null \
+  | grep $ORDER | cut -f2- | jq -c '{type: .eventType, reason: .data.reason}'
+----
+
+The reserved count drops by one at the cancellation and does not rise again at the replay; the order
+stays `CANCELLED`. Catalog's answers are `stock-reserved`, then `stock-reservation-failed`: "The
+reservation for order … was released; an order reserves stock once, a new order needs a new id".
+
 === Break it
 
 * *Change:* in `ReservationService.attemptReservation` (catalog), delete the `if (… RELEASED)` block.
@@ -207,6 +271,30 @@ Story: xref:architecture:consistency/replayed-order-placed.adoc[A replayed order
 == 6. A replayed order-confirmed
 
 Story: xref:architecture:consistency/replayed-order-confirmed.adoc[A replayed order-confirmed].
+
+=== Live
+
+An order catalog cannot reserve is cancelled before shipping ever hears of it. Then shipping gets
+the cancellation request (it has no shipment) and, later, the lost confirmation:
+
+[source,bash]
+----
+fresh
+ORDER=$(curl -s -X POST $GW/orders -H "Authorization: Bearer $BOB" -H "$J" -H "Idempotency-Key: $(uuid)" \
+  -d "{\"lines\":[{\"sku\":\"$SKU\",\"quantity\":100}]}" | jq -r .id)
+sleep 2; show $ORDER
+send_event order.lifecycle $ORDER order.cancellation-requested "{\"orderId\":\"$ORDER\",\"reason\":\"drill\"}"
+sleep 3
+docker compose exec -T -e PGPASSWORD=shipping_service postgres psql -h localhost -U shipping_service -d shipping_db \
+  -c "select order_id, cancelled_at from cancelled_orders where order_id = '$ORDER'"
+send_event order.lifecycle $ORDER order.order-confirmed \
+  "{\"orderId\":\"$ORDER\",\"customerId\":\"b0b00000-0000-4000-8000-000000000002\",\"lines\":[{\"sku\":\"$SKU\",\"quantity\":100}],\"shippingAddress\":\"Kadıköy 1, İstanbul\"}"
+sleep 3; show $ORDER
+----
+
+The order is `CANCELLED` with no shipment; the cancellation request leaves one row in
+`cancelled_orders`; after the late confirmation the shipment is still `none`, and shipping-service
+logs a warning that the order was confirmed after its cancellation.
 
 === Break it
 
@@ -220,6 +308,16 @@ Story: xref:architecture:consistency/inbox-forgets.adoc[An inbox that forgets to
 
 === Live
 
-Start any service with an inbox retention no longer than the topic retention, for example
-`./mvnw -pl order-service spring-boot:run -Dspring-boot.run.arguments=--ecommerce.messaging.inbox.retention=7d`.
-It refuses to start, and the message explains which events would be processed twice.
+Start a second order-service (on a random port) with an inbox retention no longer than the topic
+retention:
+
+[source,bash]
+----
+./mvnw -q -pl order-service spring-boot:run \
+  -Dspring-boot.run.arguments="--ecommerce.messaging.inbox.retention=7d --server.port=0"
+----
+
+It stops with `APPLICATION FAILED TO START`: "ecommerce.messaging.inbox.retention (PT168H) must be
+longer than ecommerce.messaging.topics.retention (PT168H): events Kafka can still redeliver would be
+processed again". The database pool had opened, but the port never did and no listener started: not
+a single event was consumed with the dangerous setting.
