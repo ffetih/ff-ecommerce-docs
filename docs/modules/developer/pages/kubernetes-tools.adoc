@@ -94,8 +94,9 @@ helm show values strimzi/strimzi-kafka-operator | less
 
 === Kustomize (optional)
 
-kubectl already contains Kustomize (`kubectl kustomize <dir>`, `kubectl apply -k <dir>`). The
-standalone binary is usually newer; Flux's kustomize-controller also uses a recent version, so
+kubectl already contains Kustomize (`kubectl kustomize <dir>`, `kubectl apply -k <dir>`);
+`kubectl version --client` shows which: kubectl v1.35.5 has Kustomize v5.7.1. The standalone binary is
+usually newer; Flux's kustomize-controller also uses a recent version, so
 rendering with the standalone binary shows most exactly what Flux will do:
 
 [source,bash]
