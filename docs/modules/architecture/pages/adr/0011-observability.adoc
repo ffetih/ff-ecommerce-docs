@@ -1,0 +1,80 @@
+= ADR-0011: Observability with OpenTelemetry, Jaeger, Prometheus and Grafana
+:description: How one order is followed across five services, how the saga's health is measured, and who may read either.
+
+* *Status:* Proposed
+* *Date:* 2026-11-26
+
+== Context
+
+Thirteen failure stories end with the same question: how would anyone notice this in production?
+The services already count what matters (outbox lag, dead letters, since s06), but only someone
+with an admin token and `curl` can read it. And nothing connects the five services: a customer's
+order is a request in order-service, an event in catalog, a command in payment, a shipment in
+shipping, each logged on its own.
+
+Two kinds of answer are needed:
+
+* *Follow one order* across services, HTTP and Kafka: where did it stop, and why? (traces)
+* *See the whole system* over time: is the saga moving, is anything piling up? (metrics, alerts)
+
+== Decision
+
+*Traces: OpenTelemetry through Micrometer, into Jaeger v2.* Every service uses Spring Boot's
+`spring-boot-starter-opentelemetry`: Micrometer Observation creates the spans, its OpenTelemetry
+bridge exports them over OTLP. No Java agent: the instrumentation is part of the build, visible and
+tested. Jaeger v2 receives OTLP natively and shows the traces; it runs in compose with in-memory
+storage, which is enough for development.
+
+*Kafka carries the trace context.* Observation is switched on for `KafkaTemplate` and the listener
+containers, so each record carries a W3C `traceparent` header and each consumer continues the
+producer's trace.
+
+*The outbox carries it across the database.* An event is written in the request's transaction but
+sent later by the relay, on another thread, where the request's trace no longer exists. The outbox
+therefore stores the `traceparent` of the moment the event was appended, and the relay sends each
+record inside a span whose parent is that stored context. One trace runs from the customer's HTTP
+request, through the outbox table, through Kafka, into every service that reacts, and back.
+
+*Logs carry the trace id.* Every log line written inside a span shows its trace and span id, so a
+line in any service's log leads to the whole trace in Jaeger, and a trace leads to the lines.
+
+*Metrics: Prometheus scrapes, Grafana shows.* Each service exposes `/actuator/prometheus`
+(Micrometer's Prometheus registry). Prometheus scrapes them; Grafana has the Prometheus and Jaeger
+data sources and one provisioned dashboard for the saga: outbox lag, dead letters, Kafka listener
+throughput and errors, HTTP error rates, payments waiting for the provider.
+
+*Scraping is authenticated, not opened.* Metrics stay behind a token (ADR-0008: operational detail
+is useful to an attacker). A new confidential client `prometheus` gets client-credentials tokens
+with a `monitoring` role and every service's audience; the services allow `monitoring` and `admin`
+on their metric endpoints. Prometheus fetches the token itself (`oauth2` in its scrape config).
+
+*Alerts as rules, written down once.* The alert rules from the operations guide become Prometheus
+rule files: a dead letter, an outbox older than a minute, payments waiting for the provider for more
+than five minutes. Prometheus evaluates them and shows them firing; sending them to people
+(Alertmanager, chat) is left for packaging (s11).
+
+*All of it is optional for development.* Jaeger, Prometheus and Grafana run in compose under the
+profile `observability`. Without it, services still start: exporting a span to a Jaeger that is not
+there only logs a warning. Tests do not need any of it.
+
+== Consequences
+
+* A support question ("my order is stuck") starts in Grafana or Jaeger, not in five log files.
+* The outbox table grows one column; the relay starts a span per record it publishes.
+* Every request and every message pays for a span. Sampling is 100% in development; production
+  would sample (configurable).
+* One more Keycloak client and role, with the same "realm as code" discipline.
+* New failure story: a trace that breaks at the outbox. Its test proves the trace id survives.
+
+== Alternatives considered
+
+* *The OpenTelemetry Java agent.* Instruments more with no code, but outside the build: versions
+  drift, and it would not know our outbox anyway.
+* *Zipkin.* Supported equally well by Spring Boot; Jaeger v2 is OTLP-native and closer to where the
+  ecosystem is going.
+* *Grafana Tempo instead of Jaeger.* One vendor for everything; Jaeger's UI is better for learning
+  to read traces, and either can be swapped in later because the services only speak OTLP.
+* *An unauthenticated `/actuator/prometheus`.* Simplest, and common; but it would undo ADR-0008 for
+  the one endpoint that tells an attacker most about the system.
+* *An OpenTelemetry Collector in between.* Useful for routing and sampling at scale; one hop more
+  than a single developer machine needs.
