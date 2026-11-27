@@ -8,6 +8,7 @@
 |xref:local-run.adoc[Local run and tests] |start infrastructure and services, run the three levels of tests
 |xref:container-images.adoc[Container images (Jib)] |build, inspect and change the services' images, and see how CI publishes them
 |xref:kubernetes-tools.adoc[Kubernetes tools on WSL] |install k3d, kubectl, Flux, Helm and Kustomize for the local cluster, and create the token for the Flux bootstrap
+|xref:kubernetes-run.adoc[Run on Kubernetes] |create the cluster, bootstrap Flux, reach every tool, and change what runs with a commit
 |xref:codebase.adoc[Codebase map] |know where a piece of code belongs
 |xref:api.adoc[API reference] |call an endpoint: who may, what it returns
 |xref:ui-integration.adoc[API and login for the UI] |understand the contract a browser client must follow
@@ -15,6 +16,7 @@
 |xref:add-an-event.adoc[Recipe: add an event and a consumer] |extend the saga without breaking its guarantees
 |xref:try-it/order-to-delivery.adoc[Try it: an order] |walk one order from placing to delivery with curl
 |xref:try-it/failure-drills.adoc[Try it: failure drills] |break a safeguard on purpose and watch its test fail
+|xref:try-it/kubernetes-drills.adoc[Try it: drills on Kubernetes] |change the cluster by hand, kill pods mid-payment, remove a Kafka permission in Git, and watch what repairs it
 |===
 
 Code: {code-repo}[ff-ecommerce] (backend) and {ui-repo}[ff-ecommerce-ui] (web console).

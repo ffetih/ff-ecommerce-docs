@@ -68,7 +68,7 @@ curl -s -H "Authorization: Bearer $(token admin)" \
 [source,yaml]
 ----
 - alert: ServiceDown
-  expr: up == 0
+  expr: up{service=~".+-service|gateway"} == 0
   for: 1m
 - alert: OutboxStuck
   expr: outbox_oldest_pending_age_seconds > 30
@@ -77,10 +77,15 @@ curl -s -H "Authorization: Bearer $(token admin)" \
   expr: increase(messaging_dead_letters_total[10m]) > 0
 - alert: HighServerErrorRate
   expr: |
-    sum by (service) (rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
-      / sum by (service) (rate(http_server_requests_seconds_count[5m])) > 0.05
+    sum by (namespace, service) (rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+      / sum by (namespace, service) (rate(http_server_requests_seconds_count[5m])) > 0.05
   for: 5m
 ----
+
+The same file is the cluster's rule: `scripts/prometheus-rule.sh` wraps it into the `PrometheusRule`
+`deploy/infrastructure/monitoring/ecommerce-rules.yaml`; edit the file, run the script, commit both.
+`ServiceDown` names our six services because in the cluster Prometheus also scrapes its own stack and
+the kubelet; `HighServerErrorRate` keeps `namespace` because Alertmanager routes on it.
 
 An alert is *pending* while its condition holds but its `for` has not passed, then *firing*. It
 resolves by itself when the condition stops.
@@ -113,12 +118,20 @@ docker compose exec -T -e PGPASSWORD=order_service postgres psql -h localhost -U
   "SELECT event_type, message_key, attempts, next_attempt_at, left(last_error, 100) FROM outbox_messages WHERE published_at IS NULL ORDER BY id"
 ----
 
+In the cluster, run the same query through the CloudNativePG pod, as the `payment` drill helper does:
+`kubectl exec -i -n ecommerce postgres-1 -c postgres -- psql -U postgres -d order_db -c "…"`.
+
 * *Every row fails, with `Send failed` or a timeout:* Kafka is unreachable. Nothing is lost: the
   relay keeps retrying with growing pauses (up to 5 minutes) and publishes by itself once Kafka is
   back. Fix Kafka; the alert resolves.
 * *One key fails, others are published:* that key's oldest message cannot be sent (a missing topic,
   a message too large). Later messages of the same key wait behind it on purpose, to keep their
   order. Fix the cause; do not delete the row.
+* *`TopicAuthorizationException`:* in the cluster, the service's `KafkaUser` has no ACL for that topic.
+  Fix the ACL in Git. The row is retried at its next slot (`next_attempt_at`), up to 5 minutes after
+  the fix; `UPDATE outbox_messages SET next_attempt_at = now() WHERE published_at IS NULL` brings the
+  retry forward and leaves the publishing to the relay
+  (xref:developer:try-it/kubernetes-drills.adoc#_3_a_kafka_permission_taken_away_in_git[the drill]).
 
 The waiting order's trace shows each attempt and its error
 (xref:observability.adoc#_follow_one_order_from_its_database_row_to_its_trace[find it from the row]).

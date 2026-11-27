@@ -114,6 +114,10 @@ with its own token; Grafana dashboard and alert rules as code
 
 |Security |Every service is a resource server with deny-by-default rules
 (xref:adr/0008-security.adoc[ADR-0008], xref:security.adoc[security model]).
+
+|Deployment |The images run in compose and in a Kubernetes cluster that Flux keeps equal to the
+repository; Kafka clients log in, each with its own ACLs
+(xref:adr/0013-kubernetes-gitops.adoc[ADR-0013], xref:deployment.adoc[deployment]).
 |===
 
 == Quality goals

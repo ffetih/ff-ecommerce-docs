@@ -1,0 +1,123 @@
+= Try it: drills on Kubernetes
+:description: Change the cluster by hand, kill pods in the middle of a payment, and take away a Kafka permission in Git: who repairs what, and what the alerts say.
+
+Three drills on the running cluster (xref:kubernetes-run.adoc[run on Kubernetes]). Each one breaks
+something at a different level and shows which mechanism repairs it: Flux, Kubernetes, or the
+services' own stored state (xref:architecture:deployment.adoc#_who_repairs_what[who repairs what]).
+
+Setup, once per terminal, from the code repository:
+
+[source,bash]
+----
+DRILL_TARGET=k8s source scripts/drills.sh
+drill_setup
+----
+
+== 1. A change made by hand
+
+Git says order-service runs one replica. Someone scales it to zero with `kubectl`.
+
+[source,bash]
+----
+kubectl scale deploy/order-service -n ecommerce --replicas=0
+kubectl get deploy order-service -n ecommerce                       # 0/0: no orders can be placed
+flux diff kustomization apps --path ./deploy/apps/overlays/local   # what Flux would change back
+----
+
+image::flux-diff-drift.png[flux diff reports the order-service Deployment as drifted: spec.replicas 0 in the cluster and 1 in Git]
+
+`spec.replicas` is the drift; `metadata.generation` only counts spec changes and follows. `flux diff`
+exits with a non-zero code when it finds a difference, so a pipeline step can fail on drift. Flux
+re-applies Git at its next reconcile (every 10 minutes), or at once:
+
+[source,bash]
+----
+flux reconcile kustomization apps --with-source
+kubectl get deploy order-service -n ecommerce        # 1/1 again
+----
+
+A manual change survives only until the next reconcile. To change the cluster, change Git.
+
+== 2. Pods killed in the middle of a payment
+
+`tok_slow` makes the provider's first answer get lost: the payment is *unknown*, and
+payment-service's resolver asks again, with the same idempotency key, once the attempt is 30 seconds
+old (xref:architecture:consistency/provider-no-answer.adoc[a provider that does not answer]). In that
+window, both services involved are deleted.
+
+[source,bash]
+----
+fresh
+o=$(place tok_slow); show $o                # PLACED, payment AUTHORIZING
+kubectl delete pod -n ecommerce -l 'app in (payment-service,order-service)'
+kubectl get pods -n ecommerce -l 'app in (payment-service,order-service)' -w   # new pods ready in about 10 s
+for i in $(seq 1 12); do echo "$(date +%T)  $(show $o | head -1)"; sleep 10; done
+----
+
+The order became `CONFIRMED, payment AUTHORIZED` about a minute later. Nothing was in a pod that
+mattered: the unknown attempt was a row in `payment_db`, the next pod's resolver found it; the
+`PaymentAuthorized` event waited in payment-service's outbox; order-service's consumer group resumed
+from its committed offset. The simulated provider forgot everything with its pod, as a real one would
+after an outage, and the same idempotency key made the second question safe.
+
+The order's trace (`trace $o`) ends at payment-service's first authorize call:
+
+image::jaeger-k8s-order-trace.png[Jaeger trace of the order: gateway, order-service, catalog-service, shipping-service and payment-service, 24 spans, ending at payment-service processing payment.commands]
+
+The resolver is a scheduled job with no incoming request, so its retry, and the confirmation after
+it, start a trace of their own. A trace follows calls and messages, not rows in a database.
+
+== 3. A Kafka permission taken away in Git
+
+Every service is a `KafkaUser` with ACLs for exactly what it does. The drill removes one line in Git:
+payment-service may no longer write `payment.events`.
+
+[source,bash]
+----
+# in deploy/apps/base/payment-service.yaml, delete the ACL entry for payment.events [Write], then:
+git commit -am "drill: payment-service may no longer write payment.events" && git push
+flux reconcile kustomization apps --with-source
+fresh; o=$(place); sleep 10; show $o | head -1     # PLACED, payment AUTHORIZING
+kubectl logs -n ecommerce deploy/payment-service --since=2m | grep TopicAuthorization
+----
+
+The payment is authorized, but its event cannot leave:
+`TopicAuthorizationException: Not authorized to access topics: [payment.events]`. The broker checks
+every request; nothing was restarted. The outbox keeps the event and retries, and its oldest pending
+age grows until `OutboxStuck` fires, after the rule's minute:
+
+image::prometheus-k8s-outbox-stuck-firing.png[Prometheus alert group ecommerce: OutboxStuck firing, the other three rules inactive]
+
+Alertmanager sends alerts from the `ecommerce` namespace to Mailpit, half a minute later, and a
+second mail when the alert resolves (after the rollback below):
+
+image::mailpit-outbox-stuck-firing-resolved.png[Mailpit inbox with two mails from alertmanager@ecommerce.local to ops@ecommerce.local: FIRING OutboxStuck payment-service, and ten minutes later RESOLVED OutboxStuck payment-service]
+
+The dashboard shows the same story: payment-service's oldest unpublished event climbing, one event
+waiting, and a `payment.events failed` series under events relayed.
+
+image::grafana-k8s-acl-drill.png[Grafana dashboard ecommerce overview during the drill: six services up, requests near zero between drills, payment-service's oldest unpublished event climbing past three minutes]
+
+The rollback is a commit too:
+
+[source,bash]
+----
+git revert --no-edit HEAD && git push
+flux reconcile kustomization apps --with-source
+for i in $(seq 1 30); do echo "$(date +%T)  $(show $o | head -1)"; sleep 10; done
+----
+
+The ACL was back at once; the order was confirmed about four minutes later, without anyone touching
+it. The wait is the outbox's backoff: each failed attempt doubles the delay, up to 5 minutes, so a
+message that failed for a few minutes is tried again only at its next slot
+(`next_attempt_at` in `outbox_messages`). Quiet during a long outage, slower right after the fix; if
+that cannot wait, `update outbox_messages set next_attempt_at = now() where published_at is null`
+moves the retry forward and leaves the publishing to the relay. When the age falls, the alert
+resolves and Alertmanager mails `[RESOLVED]` at its next group interval (5 minutes).
+
+What the drill shows:
+
+* *Least privilege works.* A service can write only where its ACLs allow, so a mistake or a
+  compromised service cannot write events in another service's name.
+* *The alert chain reaches a person*: metric, rule, Alertmanager, mail.
+* *Git is the audit log*: the break and the revert are two commits with authors and times.

@@ -5,7 +5,7 @@
 |===
 |Page |For when you need to
 
-|xref:observability.adoc[Observability] |follow one order through every service, read the dashboard, see which alerts fire
+|xref:observability.adoc[Observability] |follow one order through every service, read the dashboard, see which alerts fire (compose and the cluster)
 |xref:metrics.adoc[Metrics and alerts] |know which signal means what, and what to do when an alert fires
 |xref:dead-letters.adoc[Runbook: dead letters] |handle a message a service could not process
 |xref:payments.adoc[Runbook: payments] |handle payments waiting for the provider, money that is owed, and check the ledger

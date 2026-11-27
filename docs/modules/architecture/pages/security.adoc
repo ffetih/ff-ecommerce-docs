@@ -29,7 +29,30 @@ timeouts, renewed once when rejected.
 
 |Operations
 |Health is open for probes; `/actuator/metrics` needs the `admin` role.
+
+|Kafka (Kubernetes)
+|Every client logs in (SCRAM-SHA-512) as its own `KafkaUser` and may do only what its ACLs allow.
+Compose's Kafka is open, for local development only.
 |===
+
+== Kafka permissions in the cluster
+
+Each service's `KafkaUser` allows exactly what its code declares
+(xref:adr/0013-kubernetes-gitops.adoc[ADR-0013]); nobody may create, alter or delete topics.
+
+[cols="1,2,2,2"]
+|===
+|User |Write |Read |Also
+
+|catalog-service |`catalog.stock`, `catalog.reservations` |`order.lifecycle`, `shipping.shipments` |Write on the `-dlt` of what it reads; groups `catalog-service*`
+|order-service |`order.lifecycle`, `payment.commands` |`catalog.reservations`, `shipping.shipments`, `payment.events` |same
+|payment-service |`payment.events` |`payment.commands` |same
+|shipping-service |`shipping.shipments` |`order.lifecycle` |same
+|===
+
+A service that tries to write anywhere else is refused by the broker
+(`TopicAuthorizationException`); a drill takes one ACL away and watches the alert that follows
+(xref:developer:try-it/kubernetes-drills.adoc#_3_a_kafka_permission_taken_away_in_git[drill]).
 
 Roles: `customer` (own profile and orders), `admin` (back office: catalog, stock, shipments, any
 order), `service` (machine tokens). Realm and clients are described in

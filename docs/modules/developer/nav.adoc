@@ -3,6 +3,7 @@
 * xref:local-run.adoc[Local run and tests]
 * xref:container-images.adoc[Container images (Jib)]
 * xref:kubernetes-tools.adoc[Kubernetes tools on WSL]
+* xref:kubernetes-run.adoc[Run on Kubernetes]
 * xref:codebase.adoc[Codebase map]
 * xref:api.adoc[API reference]
 * xref:ui-integration.adoc[API and login for the UI]
@@ -11,3 +12,4 @@
 * Try it
 ** xref:try-it/order-to-delivery.adoc[An order from placing to delivery]
 ** xref:try-it/failure-drills.adoc[Failure drills]
+** xref:try-it/kubernetes-drills.adoc[Drills on Kubernetes]

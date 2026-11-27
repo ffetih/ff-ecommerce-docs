@@ -163,15 +163,26 @@ runs:
 
 [source,bash]
 ----
-./mvnw -B -ntp -DskipTests -Dimage.tag=${GITHUB_SHA::7} -Djib.to.tags=main package jib:build
+./mvnw -B -ntp -DskipTests \
+  -Dimage.tag=main-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7} \
+  -Djib.to.tags=${GITHUB_SHA::7},main \
+  package jib:build
 ----
 
 `jib:build` pushes straight to the registry, without Docker. The layers pay off on the other side
 too: after the first publish, `docker pull ghcr.io/ffetih/ff-ecommerce/order-service:main` on a machine
 that had built the images locally downloaded 4 of its 12 layers; the other 8 (base image and
-dependencies) were "Already exists". Each image gets two tags: the commit's
-short SHA (immutable, what a cluster deploys) and `main` (moves with every push). Pull requests and
-sprint branches only test; an image exists only for code that passed on `main`.
+dependencies) were "Already exists". Each image gets three tags:
+
+* `main-<run>-<sha>`, for example `main-69-3fabae9`: immutable, and it *sorts*. The CI run number
+  grows with every run, so Flux's image automation can tell which image is the newest (a SHA alone
+  has no order; xref:architecture:deployment.adoc#_how_a_new_image_arrives[how a new image arrives]).
+* the commit's short SHA: immutable, to find the image of a commit.
+* `main`: moves with every push, for a quick `docker pull`.
+
+Pull requests and sprint branches only test; an image exists only for code that passed on `main`.
+Pushes that change only `deploy/**` or Markdown files do not run CI at all: they contain no code,
+and Flux's own commits (new image tags) would otherwise start a build each.
 
 == When it fails
 

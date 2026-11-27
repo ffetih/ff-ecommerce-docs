@@ -1,0 +1,133 @@
+= Deployment: Kubernetes and GitOps
+:description: How the system runs in a cluster: the layers Flux applies in order, the namespaces, how a new image arrives, and who repairs what.
+
+The same images that compose starts run in a local k3d cluster that Flux keeps equal to the `deploy/`
+folder of the code repository (xref:adr/0013-kubernetes-gitops.adoc[ADR-0013]). Nothing is applied
+with `kubectl`: a change is a commit, a rollback is a revert, and a manual change is undone.
+How to start it: xref:developer:kubernetes-run.adoc[Run on Kubernetes].
+
+== Four layers, applied in order
+
+Each box is a Flux `Kustomization`: a folder that Flux renders with Kustomize, applies, and keeps
+applied. `dependsOn` orders them: a layer waits until the one it depends on is ready at the same
+commit. The operators come first because the later layers are made of kinds that only exist once an
+operator has installed its CRDs (`Kafka`, `Cluster`, `ServiceMonitor`, …).
+
+[graphviz,flux-layers,svg]
+----
+digraph layers {
+  rankdir=LR; nodesep=0.3; ranksep=0.6; fontname="Helvetica";
+  node [shape=box, style="rounded,filled", fillcolor="#f4f4f4", color="#888888", fontname="Helvetica", fontsize=10, margin="0.15,0.08"];
+  edge [color="#555555", arrowsize=0.7, fontname="Helvetica", fontsize=9];
+
+  git [label="GitHub\nff-ecommerce\ndeploy/", shape=folder, fillcolor="#ffffff"];
+  ctl [label="infra-controllers\nStrimzi · CloudNativePG\nkube-prometheus-stack\n(Helm releases)", fillcolor="#fdf1e3", color="#c98a3c"];
+  cfg [label="infra-configs\nKafka · PostgreSQL · Keycloak\n(namespace ecommerce)"];
+  mon [label="monitoring\nalert rules · dashboard\nJaeger · Mailpit"];
+  app [label="apps\nsix services · topics\nKafka users · ServiceMonitors", fillcolor="#e7f0fa", color="#4a7fb5"];
+
+  git -> ctl [label="Flux"];
+  ctl -> cfg [label="dependsOn"];
+  ctl -> mon [label="dependsOn"];
+  cfg -> app [label="dependsOn"];
+}
+----
+
+[cols="1,2,3"]
+|===
+|Layer |Folder |Contents
+
+|`infra-controllers` |`deploy/infrastructure/controllers` |Operators as Helm releases with pinned
+chart versions: Strimzi 1.3.1, CloudNativePG 0.29.2 (operator 1.30.2), kube-prometheus-stack 94.1.0
+(Prometheus Operator, Prometheus, Alertmanager, Grafana).
+|`infra-configs` |`deploy/infrastructure/configs` |What the services connect to: a `Kafka` (4.3.2,
+one KRaft node, SCRAM-SHA-512 listener, ACLs on), a CloudNativePG `Cluster` (PostgreSQL 17) with a
+login role and a `Database` per service, Keycloak with the realm file compose imports.
+|`monitoring` |`deploy/infrastructure/monitoring` |The four alert rules as a `PrometheusRule`
+(generated from compose's rule file), the dashboard as a ConfigMap, Jaeger all-in-one, Mailpit.
+|`apps` |`deploy/apps/overlays/local` |The six services (base plus this cluster's overlay), their
+topics (`KafkaTopic`), their Kafka logins and ACLs (`KafkaUser`), how Prometheus scrapes them
+(`ServiceMonitor`), and the shop's Ingress.
+|===
+
+== Namespaces
+
+[cols="1,3,3"]
+|===
+|Namespace |What |Why there
+
+|`ecommerce` |the services, Kafka, PostgreSQL, Keycloak, the ServiceMonitors |A pod reads Secrets
+only from its own namespace: Strimzi writes each `KafkaUser`'s password next to the user, and the
+service mounts it. A ServiceMonitor belongs with the service it describes, and its OAuth2 Secret too.
+|`monitoring` |Prometheus, Alertmanager, Grafana, Jaeger, Mailpit, the alert rules and the dashboard |
+The platform: one per cluster, for every application. Prometheus watches ServiceMonitors in all
+namespaces.
+|`strimzi`, `cnpg-system` |the two operators |They watch other namespaces and own nothing of ours.
+|`flux-system` |Flux's controllers, the Kustomizations, the image automation |Written by `flux bootstrap`.
+|===
+
+The entry points go through Traefik (k3s's ingress controller) on one host port:
+`shop.localtest.me:8888` (the gateway), `keycloak.`, `grafana.`, `prometheus.`, `alertmanager.`,
+`jaeger.` and `mail.localtest.me:8888`. `localtest.me` is a public name that resolves to 127.0.0.1.
+The issuer in every token is `http://keycloak.localtest.me:8888/realms/ecommerce`; pods fetch keys
+and tokens from the internal Service, as the containers do in compose.
+
+== How a new image arrives
+
+No one edits an image tag. CI publishes an image only for code that passed on `main`; Flux notices
+it and writes the tag into Git; the commit is what deploys.
+
+[graphviz,image-automation,svg]
+----
+digraph images {
+  rankdir=LR; nodesep=0.25; ranksep=0.45; fontname="Helvetica";
+  node [shape=box, style="rounded,filled", fillcolor="#f4f4f4", color="#888888", fontname="Helvetica", fontsize=10, margin="0.12,0.06"];
+  edge [color="#555555", arrowsize=0.7, fontname="Helvetica", fontsize=9];
+
+  merge [label="merge to main", fillcolor="#ffffff"];
+  ci [label="CI: verify,\nJib push"];
+  ghcr [label="GHCR\nmain-69-3fabae9", fillcolor="#e7f0fa", color="#4a7fb5"];
+  repo [label="ImageRepository\nscans every minute"];
+  pol [label="ImagePolicy\nhighest run number"];
+  auto [label="ImageUpdateAutomation\ncommits the tag", fillcolor="#fdf1e3", color="#c98a3c"];
+  apps [label="apps Kustomization\nrolling update"];
+
+  merge -> ci -> ghcr -> repo -> pol -> auto -> apps;
+}
+----
+
+* *Tags sort.* Each image is tagged `main-<run number>-<short sha>`; a SHA alone has no order, the
+  run number does. The policy keeps only tags matching `^main-(?P<run>[0-9]+)-[a-f0-9]\{7}$`.
+* *Only marked lines change.* The overlay's `newTag` lines carry a `$imagepolicy` comment; Flux
+  rewrites those and nothing else, and commits as `fluxcdbot`.
+* *One rollout per release.* CI pushes the six images one after another and each ImageRepository
+  scans on its own timer, so the first rollout arrived as five commits, one or two services each.
+  `policyChangeDelay: 3m` now gathers the changes into one commit.
+* *Flux's commits don't build.* CI ignores pushes that touch only `deploy/**` or Markdown.
+
+== Who repairs what
+
+Three different mechanisms keep the system running, at three different levels. Each was tried on
+purpose: xref:developer:try-it/kubernetes-drills.adoc[drills on Kubernetes].
+
+[cols="1,2,2"]
+|===
+|Mechanism |Notices |Repairs
+
+|Flux |the cluster's objects differ from Git (someone ran `kubectl scale`, `edit`, `delete`)
+|re-applies Git at the next reconcile (every 10 minutes, or at once with `flux reconcile`)
+|Kubernetes (ReplicaSet, probes) |a pod is missing, or does not answer its liveness probe
+|starts a new pod within seconds
+|The services (outbox, inbox, resolver) |work stopped half-way: a pod died, Kafka refused a message
+|state is in PostgreSQL and Kafka, so the next pod, or the next retry, continues where it stopped
+|===
+
+A rollback is a commit like any other. In the third drill an ACL was removed in Git, payments
+stopped reaching order-service, an alert arrived by mail; `git revert` put the ACL back and the
+waiting order was confirmed without anyone touching a pod or a database. The history shows all of it:
+
+[source]
+----
+9c87b54 ffetih  Revert "drill: payment-service may no longer write payment.events"
+973f69f ffetih  drill: payment-service may no longer write payment.events
+----

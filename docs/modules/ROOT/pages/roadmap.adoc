@@ -21,20 +21,27 @@ decisions are recorded as ADRs, *these docs are updated*, and the sprint is tagg
 |s09 |Returns |Returns in order-service (ADR-0010): within 14 days of delivery, never more than was bought (a database-enforced counter per order line); refund when the goods arrive back, never more than was captured; restock idempotent by return; three new failure stories |done
 |s10 |Observability |One trace per order through HTTP, Kafka and the outbox (OpenTelemetry, Jaeger); Prometheus scraping with its own Keycloak client; Grafana dashboard and four alert rules as code; the drill's trace exposed a relay attempt blocking a minute, now capped at the send timeout; one new failure story |done
 |s11 |Packaging |Images built by Jib and pushed to GHCR from CI; the whole system with one command (`docker compose --profile app up`); one token issuer inside and outside containers |done
-|s12 |Kubernetes and GitOps |A k3d cluster synced by Flux: infrastructure as Helm releases (Strimzi, CloudNativePG, Keycloak, Prometheus stack, Jaeger), services as Kustomize; Kafka users and ACLs; image automation; alerts delivered |next
-|s13+ |Optional |Marketplace (sellers, orders split per seller, split payments and payouts); promotions; back-in-stock notifications |optional
+|s12 |Kubernetes and GitOps |A k3d cluster kept equal to the repository by Flux, in four layers: operators as Helm releases (Strimzi, CloudNativePG, Prometheus stack), Kafka, PostgreSQL and Keycloak as their resources, our services as Kustomize; topics in Git and a Kafka user with ACLs per service; new images rolled out by Flux's own commits; alerts mailed; health checks no longer traced; three drills: drift undone, pods killed mid-payment, an ACL removed and reverted in Git |done
+|s13+ |Optional |Wishlist with back-in-stock and price-drop notifications, a new consumer of catalog's events; promotions that stay valid for an order already placed |optional
 |===
 
 A web console (customer shop and back-office saga view) is built in parallel in
 {ui-repo}[ff-ecommerce-ui] (see xref:developer:web-console.adoc[Web console] and
 xref:developer:ui-integration.adoc[API and login for the UI]).
 
-== Next: s12 Kubernetes and GitOps
+== Where it stands after s12
 
-Since s11 each service is an image (Jib, no Dockerfile), published to GitHub Container Registry from
-CI, and the whole system starts with one command (xref:architecture:adr/0012-packaging.adoc[ADR-0012]).
+The system runs three ways from the same images and the same realm: services from the IDE, the
+whole system in compose (xref:architecture:adr/0012-packaging.adoc[ADR-0012]), and a Kubernetes
+cluster that follows the repository (xref:architecture:adr/0013-kubernetes-gitops.adoc[ADR-0013],
+xref:architecture:deployment.adoc[deployment]).
 
-s12 takes the same images to Kubernetes: a k3d cluster that Flux keeps in sync with the repository,
-third-party components as Helm releases, our services as Kustomize, Kafka with a user and ACLs per
-service, new images rolled out by Flux's image automation, and Alertmanager so the four alert rules
-reach a person instead of a web page.
+== Next
+
+Optional features, each chosen because it is event-driven and builds on what exists:
+
+* *Wishlist:* a customer's saved products, with a mail when one is back in stock or cheaper. A new
+  consumer of catalog's stock events and a new price-change event, without changing catalog's code
+  paths; Mailpit is the inbox.
+* *Promotions:* a discount that must be valid when the order is placed and honoured even if it
+  expires while the saga runs. Where the price is decided, and who owns it, becomes an ADR.

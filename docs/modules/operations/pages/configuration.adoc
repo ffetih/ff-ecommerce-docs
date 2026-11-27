@@ -57,6 +57,26 @@ the IDE.
 Each service answers `/actuator/health/readiness` (send me traffic) and `/actuator/health/liveness`
 (do not restart me), open like `/actuator/health`; the container health checks use readiness.
 
+== Kubernetes (overlay `deploy/apps/overlays/local`)
+
+The same images, configured from three sources; nothing is baked into an image.
+
+[cols="2,2,3"]
+|===
+|Source |Variables |Meaning
+
+|ConfigMap `platform` (overlay) |`KAFKA_BOOTSTRAP_SERVERS=kafka-kafka-bootstrap:9092`, `ISSUER_URI`, `…JWT_JWKSETURI`, `OTLP_TRACES_ENDPOINT` |Service names inside the cluster; the issuer stays the public `http://keycloak.localtest.me:8888/realms/ecommerce`.
+|ConfigMap `platform` (overlay) |`SPRING_KAFKA_PROPERTIES_SECURITY_PROTOCOL=SASL_PLAINTEXT`, `SPRING_KAFKA_PROPERTIES_SASL_MECHANISM=SCRAM-SHA-512` |Every Kafka client logs in.
+|ConfigMap `platform` (overlay) |`SPRING_KAFKA_ADMIN_AUTO_CREATE=false` |The services do not create topics; the `KafkaTopic` resources do.
+|Secret `<service>` (written by Strimzi) |`SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG` |The service's own Kafka user and password, from its `KafkaUser`.
+|Secret `<name>-db-credentials` (overlay) |`SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `SPRING_DATASOURCE_URL` in the Deployment |The service's database login on `postgres-rw:5432`, the role CloudNativePG manages.
+|Overlay `images:` |`newTag: main-<run>-<sha>` |Which image runs; written by Flux's image automation, not by hand.
+|===
+
+Probes: `startupProbe` (up to 3 minutes) and `livenessProbe` on `/actuator/health/liveness`,
+`readinessProbe` on `/actuator/health/readiness`; the gateway's on its management port 8089.
+Resources: 384 MiB requested, 512 MiB limit; the JVM takes 75% of the limit as heap.
+
 == Order expiry (order-service)
 
 [cols="2,1,3"]

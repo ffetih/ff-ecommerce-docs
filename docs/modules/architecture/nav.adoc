@@ -18,6 +18,7 @@
 ** xref:consistency/refunds-beyond-capture.adoc[Refunds beyond the capture]
 ** xref:consistency/outbox-trace.adoc[A trace that breaks at the outbox]
 * xref:security.adoc[Security model]
+* xref:deployment.adoc[Deployment: Kubernetes and GitOps]
 * xref:adr/index.adoc[Decisions (ADRs)]
 ** xref:adr/0001-hexagonal-architecture.adoc[ADR-0001: Hexagonal architecture]
 ** xref:adr/0002-database-per-service.adoc[ADR-0002: Database per service]

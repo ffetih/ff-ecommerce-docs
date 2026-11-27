@@ -1,0 +1,124 @@
+= Run on Kubernetes
+:description: Create the local k3d cluster, bootstrap Flux, reach every tool through one port, place an order, and change what runs with a commit.
+
+The whole system in a local k3d cluster, kept equal to the repository by Flux. How the pieces fit:
+xref:architecture:deployment.adoc[Deployment: Kubernetes and GitOps]. The same images run in compose
+(xref:local-run.adoc[local run]); stop compose first, both want the same memory.
+
+== Before you start
+
+* The tools: k3d, kubectl and the Flux CLI (xref:kubernetes-tools.adoc[Kubernetes tools on WSL]).
+* About 8 GB of free memory: `free -h` in WSL.
+* Compose stopped: `docker compose --profile app --profile observability down`.
+* The images on `main` are public in GHCR, so the cluster pulls them without credentials.
+
+== Create the cluster
+
+[source,bash]
+----
+scripts/cluster.sh create      # k3d cluster ff-ecommerce, k3s v1.35.5, host port 8888 → the cluster's port 80
+kubectl get nodes              # one node, Ready
+----
+
+`scripts/cluster.sh stop`, `start` and `delete` do what they say. A stopped cluster keeps its data
+(Kafka and PostgreSQL write to volumes); a deleted one is rebuilt by the bootstrap below.
+
+== Bootstrap Flux, once
+
+Flux needs a GitHub token once, to commit its own manifests and add a deploy key
+(xref:kubernetes-tools.adoc#_the_github_token_for_flux_bootstrap[the token]):
+
+[source,bash]
+----
+export GITHUB_TOKEN=<the token>
+flux bootstrap github --owner=ffetih --repository=ff-ecommerce --personal \
+  --branch=main --path=deploy/clusters/local --read-write-key \
+  --components-extra=image-reflector-controller,image-automation-controller
+unset GITHUB_TOKEN
+----
+
+`--read-write-key` because image automation commits new image tags; the two extra components are
+the image automation itself. Then watch the layers come up, operators first (about ten minutes the
+first time, most of it pulling images):
+
+[source,bash]
+----
+flux get kustomizations --watch --timeout 30m    # Ctrl-C when all five are True
+kubectl get pods -A
+----
+
+[NOTE]
+====
+`✗ timed out waiting for the condition` after five minutes is the `flux` command giving up, not the
+cluster: every `flux` command has a `--timeout` of 5 minutes by default. Run it again, or give it
+`--timeout`.
+====
+
+== Where everything is
+
+[cols="1,2,2"]
+|===
+|Address |What |Login
+
+|http://shop.localtest.me:8888/api/v1 |the gateway |tokens from Keycloak
+|http://keycloak.localtest.me:8888/admin |Keycloak admin console |`kcadmin` / `kcadmin`
+|http://grafana.localtest.me:8888 |Grafana, dashboard *ecommerce: overview* |anonymous admin
+|http://prometheus.localtest.me:8888 |Prometheus: targets, alerts |none
+|http://alertmanager.localtest.me:8888 |Alertmanager |none
+|http://jaeger.localtest.me:8888 |Jaeger |none
+|http://mail.localtest.me:8888 |Mailpit: the alert mails |none
+|===
+
+`localtest.me` resolves to 127.0.0.1 for every subdomain, so no hosts file is needed, in WSL or in
+the Windows browser. The services themselves have no address outside the cluster; only the gateway
+is behind the Ingress, as in production.
+
+== The first order
+
+The drill helpers work against the cluster with one variable
+(xref:try-it/failure-drills.adoc#_setup_once_per_terminal[helpers]):
+
+[source,bash]
+----
+DRILL_TARGET=k8s source scripts/drills.sh   # shop., keycloak. and jaeger.localtest.me:8888
+drill_setup                                 # tokens, a product with 10 units, bob's profile
+o=$(place); show $o                         # CONFIRMED, payment AUTHORIZED
+trace $o                                    # the order's trace in Jaeger
+----
+
+`payment`, `trace`, `outbox` and `dl` read the database through `kubectl exec` and the actuator
+through a short `kubectl port-forward`. `send_event` works only with compose: the cluster's Kafka
+accepts only clients with a `KafkaUser`.
+
+== Change what runs
+
+Everything under `deploy/` is the desired state. Edit, commit, push; Flux applies it within a minute
+(the `GitRepository` interval), or at once:
+
+[source,bash]
+----
+flux reconcile kustomization apps --with-source   # fetch Git now and apply the apps layer
+flux get kustomizations                           # which commit each layer runs
+flux diff kustomization apps --path ./deploy/apps/overlays/local   # what Git would change in the cluster
+flux get images all -n flux-system                # the newest image per service, and the last automation commit
+----
+
+A new image needs no edit at all: merge to `main`, CI publishes `main-<run>-<sha>`, and Flux commits
+the new tag to the repository a few minutes later. `git pull` before your next push, or the push is
+rejected because of Flux's commit.
+
+== When it does not work
+
+[cols="2,3"]
+|===
+|Symptom |Means
+
+|`✗ timed out waiting for the condition` |The `flux` command's own 5-minute timeout; check `flux get kustomizations` again.
+|A layer `False`: `dependency 'flux-system/infra-controllers' is not ready` |It waits for the layer before it; look at that one (`flux logs --kind=Kustomization --name=…`).
+|A pod in `ImagePullBackOff` |The tag does not exist in GHCR, or the package is private.
+|`imagepolicy … version list argument cannot be empty` |No tag in GHCR matches `main-<run>-<sha>` yet: nothing published from `main` since the tag format changed.
+|`401` from the shop |Tokens live 15 minutes: `fresh`.
+|An order waits although the cause is fixed |The outbox retries with exponential backoff up to 5 minutes; it continues at the next attempt (xref:operations:metrics.adoc#_outboxstuck[OutboxStuck]).
+|`git push` rejected (fetch first) |Flux committed a new image tag: `git pull`, then push.
+|Your own `kubectl scale` or `edit` is undone |That is Flux: change it in Git instead.
+|===

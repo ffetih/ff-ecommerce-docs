@@ -58,5 +58,5 @@ alternatives that were rejected. New records follow the xref:adr/0000-template.a
 
 |xref:adr/0013-kubernetes-gitops.adoc[ADR-0013]
 |Kubernetes on k3d, kept in sync by Flux
-|Proposed
+|Accepted
 |===
